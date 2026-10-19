@@ -64,3 +64,21 @@ test("nitro is pinned to one exact version, and the lockfile agrees", () => {
   assert.equal(lock.packages["node_modules/nitro"].version, want);
   assert.match(readFileSync(root + ".npmrc", "utf8"), /save-exact=true/);
 });
+
+test(".gitignore keeps local data, secrets and build output out of git (QA #12)", () => {
+  for (const path of [".data", ".data/pglite/PG_VERSION", ".env", ".env.local", ".output/server/index.mjs", ".vercel/x", "node_modules/x"]) {
+    // Exit code 0 = ignored; a path git would track makes execFileSync throw.
+    execFileSync("git", ["check-ignore", "--no-index", "-q", path], { cwd: root, stdio: "pipe" });
+  }
+  assert.throws(() => execFileSync("git", ["check-ignore", "--no-index", "-q", ".env.example"], { cwd: root, stdio: "pipe" }));
+});
+
+test("every response carries the security headers (QA #12)", async () => {
+  const { SECURITY_HEADERS } = await import("../security-headers");
+  assert.match(SECURITY_HEADERS["Content-Security-Policy"], /frame-ancestors 'none'/);
+  assert.equal(SECURITY_HEADERS["X-Frame-Options"], "DENY");
+  assert.equal(SECURITY_HEADERS["X-Content-Type-Options"], "nosniff");
+  assert.match(SECURITY_HEADERS["Strict-Transport-Security"], /max-age=\d{7,}/);
+  const vite = readFileSync(root + "vite.config.ts", "utf8");
+  assert.match(vite, /routeRules: \{ "\/\*\*": \{ headers: SECURITY_HEADERS \} \}/);
+});
