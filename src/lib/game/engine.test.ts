@@ -253,3 +253,121 @@ test("a battle report against «بنو …» reads «نصر على بني …» 
   assert.match(text, /(على|أمام) بني العقيق/, text);
   assert.doesNotMatch(text, /(على|أمام|من|مع) بنو العقيق/, text);
 });
+
+async function stockOf(id: string) {
+  const r = await row(id);
+  return { water: Number(r.water), food: Number(r.food), gold: Number(r.gold), wood: Number(r.wood), stone: Number(r.stone) };
+}
+
+/** Keep bandits out of a raid test: only the raid may move goods. */
+async function isolate(...ids: string[]) {
+  const s = await sql();
+  await s`delete from bandits`;
+  await s`update world_meta set last_spawn = now(), last_tick = now() where id = 1`;
+  for (const id of ids) await s`update tribes set last_raid_at = now() where user_id = ${id}`;
+}
+
+async function raidOnce(attacker: string, defender: string, infantry: number, cavalry: number) {
+  const s = await sql();
+  const res = await engine.attack(attacker, { targetKind: "player", targetId: defender, infantry, cavalry } as never);
+  assert.ok(res.ok, res.ok ? "" : res.error);
+  await s`update marches set arrive_at = now() - interval '1 second' where attacker_id = ${attacker} and status = 'march'`;
+  await dueTick();
+  await engine.loadWorld(attacker);
+}
+
+test("PvP loot: the defender loses only what the attacker can carry and store; the excess stays home; totals conserved", async () => {
+  await found("u-loot-a", "كهلان الجدد");
+  await found("u-loot-d", "بنو المزن");
+  const s = await sql();
+  const goods = ["water", "food", "gold", "wood", "stone"] as const;
+  // Attacker almost full: 10 food of room, no gold room. Big army, rich defender.
+  await s`update tribes set peace_until = null, infantry = 400, cavalry = 100, food = 2990, gold = 3000, water = 0, wood = 0, stone = 0 where user_id = 'u-loot-a'`;
+  await s`update tribes set peace_until = null, infantry = 0, cavalry = 0, food = 2000, gold = 2000, water = 1000, wood = 1000, stone = 1000 where user_id = 'u-loot-d'`;
+  await isolate("u-loot-a", "u-loot-d");
+  const a0 = await stockOf("u-loot-a");
+  const d0 = await stockOf("u-loot-d");
+  await raidOnce("u-loot-a", "u-loot-d", 400, 100);
+  const a1 = await stockOf("u-loot-a");
+  const d1 = await stockOf("u-loot-d");
+  // Production during the test is a few units at most; measure transfer from the defender side.
+  const gained = Object.fromEntries(goods.map((g) => [g, a1[g] - a0[g]]));
+  const lost = Object.fromEntries(goods.map((g) => [g, d0[g] - d1[g]]));
+  assert.ok(lost.food <= 10 + 1, `food room was 10, defender lost ${lost.food}`);
+  assert.equal(lost.gold <= 0, true, `no gold room: defender must keep its gold (lost ${lost.gold})`);
+  assert.ok(lost.water > 0 || lost.wood > 0 || lost.stone > 0, "goods with room are taken");
+  for (const g of goods) assert.ok(Math.abs(gained[g] - Math.max(0, lost[g])) <= 1, `${g}: attacker +${gained[g]}, defender -${lost[g]}`);
+  const reports = await s`select body from reports where user_id = 'u-loot-a' and kind = 'attack' order by id desc limit 1`;
+  const body = String(reports[0]?.body);
+  assert.match(body, /بقي عند بني المزن .*ذهب لضيق بيت المال/, body);
+  assert.doesNotMatch(body, /ضاع/, body);
+  const def = await s`select body from reports where user_id = 'u-loot-d' and kind = 'defense' order by id desc limit 1`;
+  assert.match(String(def[0]?.body), /بقي لك .*لضيق بيت مالهم/);
+});
+
+test("PvP loot with free room: the attacker gets exactly what the defender loses, limited by carry", async () => {
+  await found("u-carry-a", "همدان الجدد");
+  await found("u-carry-d", "بنو الوشل");
+  const s = await sql();
+  await s`update tribes set peace_until = null, infantry = 20, cavalry = 0, food = 0, gold = 0, water = 0, wood = 0, stone = 0 where user_id = 'u-carry-a'`;
+  await s`update tribes set peace_until = null, infantry = 0, cavalry = 0, food = 2000, gold = 2000, water = 2000, wood = 2000, stone = 2000 where user_id = 'u-carry-d'`;
+  await isolate("u-carry-a", "u-carry-d");
+  const d0 = await stockOf("u-carry-d");
+  const a0 = await stockOf("u-carry-a");
+  await raidOnce("u-carry-a", "u-carry-d", 20, 0);
+  const d1 = await stockOf("u-carry-d");
+  const a1 = await stockOf("u-carry-a");
+  const goods = ["water", "food", "gold", "wood", "stone"] as const;
+  const moved = goods.reduce((n, g) => n + (d0[g] - d1[g]), 0);
+  const carry = balance.carryOf(20, 0);
+  assert.ok(moved > 0 && moved <= carry, `moved ${moved}, carry ${carry}`);
+  for (const g of goods) assert.ok(Math.abs(a1[g] - a0[g] - (d0[g] - d1[g])) <= 1, g);
+});
+
+test("bandit raid on a tribe: what the tribe loses lands in the den's hoard (nothing vanishes)", async () => {
+  await found("u-den", "بنو الرهق");
+  const s = await sql();
+  const me = await row("u-den");
+  await s`delete from bandits`;
+  await s`insert into bandits (x, y, tier, infantry, cavalry, gold, food, water, wood, stone)
+          values (${Number(me.x) + 1}, ${Number(me.y)}, 3, 300, 100, 0, 0, 0, 0, 0)`;
+  await s`update tribes set peace_until = null, last_raid_at = null, infantry = 0, cavalry = 0,
+          food = 2000, gold = 2000, water = 2000, wood = 2000, stone = 2000 where user_id = 'u-den'`;
+  const before = await stockOf("u-den");
+  await dueTick();
+  await engine.loadWorld("u-den");
+  const after = await stockOf("u-den");
+  const [den] = await s`select * from bandits`;
+  assert.ok(den, "the den survives the raid");
+  let taken = 0;
+  for (const g of ["water", "food", "gold", "wood", "stone"] as const) {
+    const lost = before[g] - after[g];
+    // the tribe also produced a little during the read; never more than 2 per good here
+    assert.ok(Math.abs(Number(den[g]) - Math.max(0, lost)) <= 2, `${g}: tribe -${lost}, den +${den[g]}`);
+    taken += Number(den[g]);
+  }
+  assert.ok(taken > 0, "the raid took something");
+  assert.ok(taken <= balance.carryOf(Number(den.infantry), Number(den.cavalry)));
+});
+
+test("raiding a bandit den with a full بيت المال: the gold is not credited and the report says it stayed in the den", async () => {
+  await found("u-den-a", "بنو الغيل");
+  const s = await sql();
+  const me = await row("u-den-a");
+  await isolate("u-den-a");
+  const [den] = await s`insert into bandits (x, y, tier, infantry, cavalry, gold, food, water, wood, stone)
+          values (${Number(me.x) + 1}, ${Number(me.y) + 1}, 1, 1, 0, 500, 500, 0, 0, 0) returning id`;
+  await s`update tribes set peace_until = null, infantry = 200, cavalry = 0, gold = 3000, food = 0 where user_id = 'u-den-a'`;
+  const gold0 = Number((await row("u-den-a")).gold);
+  const res = await engine.attack("u-den-a", { targetKind: "bandit", targetId: String(den.id), infantry: 200, cavalry: 0 } as never);
+  assert.ok(res.ok, res.ok ? "" : res.error);
+  await s`update marches set arrive_at = now() - interval '1 second' where attacker_id = 'u-den-a' and status = 'march'`;
+  await dueTick();
+  await engine.loadWorld("u-den-a");
+  const after = await row("u-den-a");
+  assert.equal(Number(after.gold), gold0, "no gold room: nothing credited");
+  assert.ok(Number(after.food) > 0, "food had room and was carried");
+  const [rep] = await s`select body from reports where user_id = 'u-den-a' and kind <> 'found' order by id desc limit 1`;
+  assert.match(String(rep.body), /بقي في الوكر .*ذهب لضيق بيت المال/, String(rep.body));
+  assert.doesNotMatch(String(rep.body), /ضاع/);
+});

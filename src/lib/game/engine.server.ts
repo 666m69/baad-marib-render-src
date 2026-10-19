@@ -67,7 +67,8 @@ import {
   growPeople,
   capsOf,
   emptyLevels,
-  spillNote,
+  keptNote,
+  lootTransfer,
   studyOpen,
   takeLoot,
   traitFactor,
@@ -408,6 +409,14 @@ async function spend(sql: Sql, userId: string, cost: Cost) {
 async function refund(sql: Sql, userId: string, cost: Cost) {
   await creditCapped(sql, userId, cost);
   if (cost.people) await sql`update tribes set people = people + ${cost.people} where user_id = ${userId}`;
+}
+
+/** Free room under each cap for a tribe right now (0 where a stock is at or over its cap). */
+async function roomOf(sql: Sql, userId: string): Promise<Stock> {
+  const caps = capsOf(await columnMap(sql, userId));
+  const [row] = await sql<Row>`select water, food, gold, wood, stone from tribes where user_id = ${userId}`;
+  const free = (good: keyof Stock) => Math.max(0, caps[good] - num(row?.[good]));
+  return { water: free("water"), food: free("food"), gold: free("gold"), wood: free("wood"), stone: free("stone") };
 }
 
 /** Add income under the caps. Whatever does not fit is lost and returned for the report. */
@@ -1100,22 +1109,19 @@ async function resolveOne(sql: Sql, march: Row) {
     let loot: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
     let spill = "";
     if (battle.attackerWins) {
-      loot = takeLoot(
-        {
-          water: num(bandit.water),
-          food: num(bandit.food),
-          gold: num(bandit.gold),
-          wood: num(bandit.wood),
-          stone: num(bandit.stone),
-        },
-        carryOf(infantry, cavalry),
-      );
-      loot = swell(loot, atkTrait, atkRenown);
+      const hoard: Stock = {
+        water: num(bandit.water),
+        food: num(bandit.food),
+        gold: num(bandit.gold),
+        wood: num(bandit.wood),
+        stone: num(bandit.stone),
+      };
+      // Carry only what fits: the rest is left in the den (QA #20 / MZ decision).
+      const move = lootTransfer(swell(takeLoot(hoard, carryOf(infantry, cavalry)), atkTrait, atkRenown), hoard, await roomOf(sql, attackerId));
       await praise(sql, attackerId);
       await sql`delete from bandits where id = ${num(bandit.id)}`;
-      const credited = await creditCapped(sql, attackerId, loot);
-      loot = credited.gain;
-      spill = spillNote(credited.lost);
+      loot = (await creditCapped(sql, attackerId, move.moved)).gain;
+      spill = keptNote(move.left, "في الوكر");
     } else if (dInf + dCav <= 0) {
       await sql`delete from bandits where id = ${num(bandit.id)}`;
     } else {
@@ -1160,15 +1166,11 @@ async function resolveOne(sql: Sql, march: Row) {
     let loot: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
     let spill = "";
     if (battle.attackerWins) {
-      loot = swell(
-        takeLoot({ water: 0, food: num(man.food), gold: num(man.gold), wood: 0, stone: 0 }, carryOf(infantry, cavalry)),
-        atkTrait,
-        atkRenown,
-      );
+      const purse: Stock = { water: 0, food: num(man.food), gold: num(man.gold), wood: 0, stone: 0 };
+      const move = lootTransfer(swell(takeLoot(purse, carryOf(infantry, cavalry)), atkTrait, atkRenown), purse, await roomOf(sql, attackerId));
       await sql`delete from saalik where id = ${num(man.id)}`;
-      const credited = await creditCapped(sql, attackerId, loot);
-      loot = credited.gain;
-      spill = spillNote(credited.lost);
+      loot = (await creditCapped(sql, attackerId, move.moved)).gain;
+      spill = keptNote(move.left, "مع الصعلوك");
       await praise(sql, attackerId);
     } else if (dCav <= 0) {
       await sql`delete from saalik where id = ${num(man.id)}`;
@@ -1246,19 +1248,20 @@ async function resolveOne(sql: Sql, march: Row) {
   const defInfLeft = Math.max(0, num(defender.infantry) - battle.defInfLoss);
   const defCavLeft = Math.max(0, num(defender.cavalry) - battle.defCavLoss);
   let loot: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
+  let left: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
   const onDirah = num(defender.x) === toX && num(defender.y) === toY;
   if (battle.attackerWins && onDirah) {
-    loot = takeLoot(
-      {
-        water: num(defender.water),
-        food: num(defender.food),
-        gold: num(defender.gold),
-        wood: num(defender.wood),
-        stone: num(defender.stone),
-      },
-      carryOf(infantry, cavalry),
-    );
-    loot = swell(loot, atkTrait, atkRenown);
+    const stock: Stock = {
+      water: num(defender.water),
+      food: num(defender.food),
+      gold: num(defender.gold),
+      wood: num(defender.wood),
+      stone: num(defender.stone),
+    };
+    // The defender loses only what the attacker can carry AND store; the rest stays home.
+    const move = lootTransfer(swell(takeLoot(stock, carryOf(infantry, cavalry)), atkTrait, atkRenown), stock, await roomOf(sql, attackerId));
+    loot = move.moved;
+    left = move.left;
     await praise(sql, attackerId);
   }
   await sql`
@@ -1273,12 +1276,9 @@ async function resolveOne(sql: Sql, march: Row) {
     where user_id = ${defenderId}
   `;
   let kept = loot;
-  let spill = "";
-  if (battle.attackerWins && onDirah) {
-    const credited = await creditCapped(sql, attackerId, loot);
-    kept = credited.gain;
-    spill = spillNote(credited.lost);
-  }
+  if (battle.attackerWins && onDirah) kept = (await creditCapped(sql, attackerId, loot)).gain;
+  const spill = keptNote(left, `عند ${genitive(String(defender.name))}`);
+  const spared = keptNote(left, "لك");
   const lootText = lootPhrase(loot);
   const keptText = lootPhrase(kept);
   const defName = String(defender.name);
@@ -1299,7 +1299,7 @@ async function resolveOne(sql: Sql, march: Row) {
     battle.attackerWins ? `${publicName} اقتحمت مضاربك` : `صددت ${publicName}`,
     `${publicName} هجمت على المضارب. خسائرك ${troopPhrase(battle.defInfLoss, battle.defCavLoss)}. خسائرهم ${troopPhrase(battle.atkInfLoss, battle.atkCavLoss)}. ${
       lootText ? `ما حُمل: ${lootText}.` : "لم يُحمل شيء."
-    }`,
+    }${spared ? ` ${spared.replace("لضيق المخزن", "لضيق مخزنهم").replace("لضيق بيت المال", "لضيق بيت مالهم")}` : ""}`,
     !battle.attackerWins,
   );
   await noteClash(
@@ -1349,13 +1349,18 @@ async function raids(sql: Sql) {
       wood: num(tribe.wood),
       stone: num(tribe.stone),
     };
-    const loot: Stock = {
+    // Survivors carry the haul back to the den: the tribe loses only what they can
+    // carry, and it lands in the den's hoard (won back by raiding the den).
+    const bInf = Math.max(0, num(bandit.infantry) - Math.max(1, Math.round(num(bandit.infantry) * 0.2)));
+    const bCav = Math.max(0, num(bandit.cavalry) - Math.round(num(bandit.cavalry) * 0.2));
+    const share: Stock = {
       water: Math.floor(stock.water * 0.1),
       food: Math.floor(stock.food * 0.12),
       gold: Math.floor(stock.gold * 0.1),
       wood: Math.floor(stock.wood * 0.1),
       stone: Math.floor(stock.stone * 0.08),
     };
+    const loot = takeLoot(share, carryOf(bInf, bCav), 1);
     const hit = await sql<Row>`
       update tribes set
         last_raid_at = now(),
@@ -1372,10 +1377,14 @@ async function raids(sql: Sql) {
       returning user_id
     `;
     if (!hit.length) continue;
-    const bInf = Math.max(0, num(bandit.infantry) - Math.max(1, Math.round(num(bandit.infantry) * 0.2)));
-    const bCav = Math.max(0, num(bandit.cavalry) - Math.round(num(bandit.cavalry) * 0.2));
     if (bInf + bCav <= 0) await sql`delete from bandits where id = ${num(bandit.id)}`;
-    else await sql`update bandits set infantry = ${bInf}, cavalry = ${bCav} where id = ${num(bandit.id)}`;
+    else
+      await sql`
+        update bandits set infantry = ${bInf}, cavalry = ${bCav},
+          water = water + ${loot.water}, food = food + ${loot.food}, gold = gold + ${loot.gold},
+          wood = wood + ${loot.wood}, stone = stone + ${loot.stone}
+        where id = ${num(bandit.id)}
+      `;
     const label = banditLabel(num(bandit.tier));
     const taken = lootPhrase(loot);
     await writeReport(

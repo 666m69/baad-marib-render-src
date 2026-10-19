@@ -36,8 +36,11 @@ function walk(dir: string, out: string[] = []) {
 /** The one migration that rewrites old stored reports may name the two Companions, only inside replace(). */
 const SCRUB = join(ROOT, "migrations", "0017_scrub_companions.sql");
 
+/** The name blocklist and its tests list sacred names in order to refuse them; they are not content. */
+const BLOCKLIST = [join(ROOT, "src", "lib", "game", "names.ts"), join(ROOT, "src", "lib", "game", "names.test.ts")];
+
 const gameFiles = [...walk(join(ROOT, "src")), ...walk(join(ROOT, "migrations")), ...walk(join(ROOT, "public"))].filter(
-  (file) => file !== SCRUB,
+  (file) => file !== SCRUB && !BLOCKLIST.includes(file),
 );
 
 test("no Companion appears anywhere in game code or content", () => {

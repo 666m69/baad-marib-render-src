@@ -593,24 +593,42 @@ export function resolveBattle(
 export type Stock = { water: number; food: number; gold: number; wood: number; stone: number };
 
 /** Report line for income lost to a full storehouse; empty when nothing spilled. */
-export function spillNote(lost: Stock) {
-  const bits: string[] = [];
-  if (lost.food) bits.push(`${lost.food} طعام`);
-  if (lost.wood) bits.push(`${lost.wood} خشب`);
-  if (lost.stone) bits.push(`${lost.stone} حجر`);
-  if (lost.water) bits.push(`${lost.water} ماء`);
-  const parts: string[] = [];
-  if (bits.length) parts.push(`${bits.join("، ")} لضيق المخزن`);
-  if (lost.gold) parts.push(`${lost.gold} ذهب لضيق بيت المال`);
-  return parts.length ? `ضاع من الغنيمة ${parts.join("، و")}.` : "";
+/**
+ * What a raid actually moves, per good: the loot, but never more than the
+ * target holds nor more than the raider's free room. Nothing is destroyed:
+ * `moved` leaves the target and reaches the raider; `left` stays with the target.
+ */
+export function lootTransfer(want: Stock, have: Stock, room: Stock): { moved: Stock; left: Stock } {
+  const moved: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
+  const left: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
+  for (const key of Object.keys(moved) as (keyof Stock)[]) {
+    const wanted = Math.max(0, Math.min(Math.floor(want[key]), Math.floor(have[key])));
+    moved[key] = Math.min(wanted, Math.max(0, Math.floor(room[key])));
+    left[key] = wanted - moved[key];
+  }
+  return { moved, left };
 }
 
-export function takeLoot(stock: Stock, carry: number): Stock {
+/** Report line for loot that did not fit the raider's stores and so stayed with the target. */
+export function keptNote(left: Stock, holder: string) {
+  const bits: string[] = [];
+  if (left.food) bits.push(`${left.food} طعام`);
+  if (left.wood) bits.push(`${left.wood} خشب`);
+  if (left.stone) bits.push(`${left.stone} حجر`);
+  if (left.water) bits.push(`${left.water} ماء`);
+  const parts: string[] = [];
+  if (bits.length) parts.push(`${bits.join("، ")} لضيق المخزن`);
+  if (left.gold) parts.push(`${left.gold} ذهب لضيق بيت المال`);
+  return parts.length ? `بقي ${holder} ${parts.join("، و")}.` : "";
+}
+
+/** Fill `carry` from `stock`, food first, taking at most `share` of each good. */
+export function takeLoot(stock: Stock, carry: number, share = LOOT_SHARE): Stock {
   const loot: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
   let room = Math.max(0, carry);
   const order: (keyof Stock)[] = ["food", "gold", "wood", "stone", "water"];
   for (const key of order) {
-    const want = Math.floor(stock[key] * LOOT_SHARE);
+    const want = Math.floor(stock[key] * share);
     const got = Math.min(want, room, stock[key]);
     loot[key] = got;
     room -= got;

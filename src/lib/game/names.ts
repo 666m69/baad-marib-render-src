@@ -8,6 +8,24 @@
  *
  * Short words that hide inside honest names (كس in كسرى, خول in خولان, mz in
  * Hamza) only match as a whole word; longer ones match anywhere.
+ *
+ * Sacred names (MZ Executive decision; content rules forbid depicting the
+ * Prophet ﷺ or the Companions as characters):
+ *  - The Prophet ﷺ: his names محمد and أحمد are blocked as a whole word even
+ *    alone (they ARE his name); his titles (المصطفى, الرسول, النبي as whole
+ *    words; رسول الله, خاتم النبيين... anywhere) and the ﷺ ligature too.
+ *  - Companions and the Mothers of the Believers: only full forms that clearly
+ *    denote the person ("خالد بن الوليد", "حمزة بن عبد المطلب", "عائشة بنت أبي
+ *    بكر") and their unique titles (الفاروق, ذو النورين, سيف الله, أسد الله,
+ *    أم المؤمنين). A first name alone (خالد, بلال, حمزة, Hamza, عائشة, علي,
+ *    عمر, أبو بكر) is an ordinary name and stays allowed. ابن/بن and أبو/أبي/أبا
+ *    compare equal.
+ *  - Allah and the Beautiful Names: blocked when they ARE the whole name,
+ *    optionally after «يا». Names only God bears (الله, الرحمن/رحمن, القيوم,
+ *    القدوس, الصمد...) are blocked with or without «ال»; names people also
+ *    carry (علي, كريم, عزيز, مالك, رشيد...) only in the «ال» form (العزيز), so
+ *    a player called عزيز is not blocked. Compounds (عبدالله, عبد الرحمن,
+ *    عبدالعزيز, نصر الله) never equal the whole name, so they stay allowed.
  */
 
 const ARABIC_MARKS = /[\u064B-\u065F\u0670\u06D6-\u06ED\u0640]/g;
@@ -34,6 +52,7 @@ function foldWord(word: string) {
 /** The words of a name, folded. */
 export function nameWords(raw: string) {
   return raw
+    .normalize("NFKD") // ﷺ and other ligatures become their words first
     .replace(ARABIC_MARKS, "")
     .split(/[\s\u200B-\u200F_.-]+/)
     .map(foldWord)
@@ -65,13 +84,74 @@ const WHOLE_WORD = [
   "mz", "mod", "gm", "كس", "زب", "طيز", "نيك", "خول", "عرص", "زاني", "fag", "dick", "sex", "rape", "ass",
 ];
 
-const anywhere = ANYWHERE.map(normalizeName);
-const wholeWord = new Set(WHOLE_WORD.map(normalizeName));
+/** The Prophet ﷺ: his names and titles, as a whole word. */
+const PROPHET_WORDS = ["محمد", "أحمد", "المصطفى", "الرسول", "النبي"];
 
-/** True when the name is profane or poses as staff. */
+/** Sacred full names and titles, matched anywhere (after ابن→بن, أبي→أبو). */
+const SACRED = [
+  // the Prophet ﷺ
+  "رسول الله", "نبي الله", "حبيب الله", "خاتم النبيين", "خاتم الأنبياء", "سيد المرسلين", "صلى الله عليه وسلم",
+  "عليه الصلاة والسلام",
+  // the ten promised Paradise
+  "أبو بكر الصديق", "عمر بن الخطاب", "عثمان بن عفان", "علي بن أبي طالب", "طلحة بن عبيد الله", "الزبير بن العوام",
+  "عبد الرحمن بن عوف", "سعد بن أبي وقاص", "سعيد بن زيد", "أبو عبيدة بن الجراح", "أبو عبيدة عامر بن الجراح",
+  // other well-known Companions
+  "بلال بن رباح", "خالد بن الوليد", "حمزة بن عبد المطلب", "جعفر بن أبي طالب", "عمار بن ياسر", "معاذ بن جبل",
+  "سلمان الفارسي", "أبو ذر الغفاري", "أبو هريرة", "مصعب بن عمير", "زيد بن حارثة", "أسامة بن زيد",
+  "عبد الله بن مسعود", "عبد الله بن عباس", "عبد الله بن عمر", "أنس بن مالك", "أبي بن كعب", "سعد بن معاذ",
+  "أبو أيوب الأنصاري", "حسان بن ثابت", "عمرو بن العاص", "معاوية بن أبي سفيان", "الحسن بن علي", "الحسين بن علي",
+  "فاطمة الزهراء",
+  // unique titles
+  "الفاروق", "ذو النورين", "سيف الله", "أسد الله", "سيد الشهداء", "أمين الأمة",
+  // the Mothers of the Believers
+  "أم المؤمنين", "أمهات المؤمنين", "خديجة بنت خويلد", "سودة بنت زمعة", "عائشة بنت أبي بكر", "حفصة بنت عمر",
+  "زينب بنت خزيمة", "هند بنت أبي أمية", "زينب بنت جحش", "جويرية بنت الحارث", "رملة بنت أبي سفيان",
+  "صفية بنت حيي", "ميمونة بنت الحارث", "مارية القبطية",
+];
+
+/** Beautiful Names only God bears: blocked as the whole name, with or without «ال». */
+const DIVINE_ONLY = [
+  "الله", "لله", "إله", "رحمن", "قدوس", "مهيمن", "قيوم", "صمد", "خالق", "بارئ", "متكبر", "مصور", "جبار", "أحد",
+  "رب العالمين", "ذو الجلال والإكرام", "مالك الملك",
+];
+/** Beautiful Names people also carry: blocked as the whole name only in the «ال» form. */
+const DIVINE_AL = [
+  "رحيم", "ملك", "سلام", "مؤمن", "عزيز", "غفار", "قهار", "وهاب", "رزاق", "فتاح", "عليم", "قابض", "باسط",
+  "خافض", "رافع", "معز", "مذل", "سميع", "بصير", "حكم", "عدل", "لطيف", "خبير", "حليم", "عظيم", "غفور", "شكور",
+  "علي", "كبير", "حفيظ", "مقيت", "حسيب", "جليل", "كريم", "رقيب", "مجيب", "واسع", "حكيم", "ودود", "مجيد",
+  "باعث", "شهيد", "حق", "وكيل", "قوي", "متين", "ولي", "حميد", "محصي", "مبدئ", "معيد", "محيي", "مميت", "حي",
+  "واجد", "ماجد", "واحد", "قادر", "مقتدر", "مقدم", "مؤخر", "أول", "آخر", "ظاهر", "باطن", "والي", "متعالي",
+  "بر", "تواب", "منتقم", "عفو", "رؤوف", "مقسط", "جامع", "غني", "مغني", "مانع", "ضار", "نافع", "نور", "هادي",
+  "بديع", "باقي", "وارث", "رشيد", "صبور",
+];
+
+const SACRED_WORD: Record<string, string> = { ابن: "بن", ابي: "ابو", ابا: "ابو" };
+/** Folded and joined like normalizeName, but ابن/بن and أبو/أبي/أبا compare equal. */
+function sacredForm(raw: string) {
+  return foldWord(nameWords(raw).map((w) => SACRED_WORD[w] ?? w).join(""));
+}
+
+const anywhere = ANYWHERE.map(normalizeName);
+const wholeWord = new Set([...WHOLE_WORD, ...PROPHET_WORDS].map(normalizeName));
+const sacred = SACRED.map(sacredForm);
+const divine = new Set([
+  ...DIVINE_ONLY.flatMap((n) => [n, `ال${n}`]),
+  ...DIVINE_AL.map((n) => `ال${n}`),
+].map(normalizeName));
+
+/** True when the whole name, with an optional leading «يا», is one of the Beautiful Names. */
+function divineName(raw: string) {
+  const words = nameWords(raw);
+  const rest = words[0] === normalizeName("يا") ? words.slice(1) : words;
+  return divine.has(normalizeName(words.join(" "))) || divine.has(foldWord(rest.join("")));
+}
+
+/** True when the name is profane, poses as staff, or uses a sacred name. */
 export function blockedName(raw: string) {
   const joined = normalizeName(raw);
   if (anywhere.some((term) => joined.includes(term))) return true;
+  const holy = sacredForm(raw);
+  if (sacred.some((term) => holy.includes(term)) || divineName(raw)) return true;
   return nameWords(raw).some((word) => wholeWord.has(word)) || wholeWord.has(joined);
 }
 
