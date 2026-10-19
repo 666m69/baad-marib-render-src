@@ -143,12 +143,9 @@ function hashStr(s: string) {
   return h >>> 0;
 }
 
-export function cleanName(raw: string) {
-  const name = raw.replace(/[\u200B-\u200F\u202A-\u202E]/g, "").replace(/\s+/g, " ").trim();
-  if (name.length < 2 || name.length > 18) return null;
-  if (!/^[\p{L}\p{N} ]+$/u.test(name)) return null;
-  return name;
-}
+import { cleanName } from "./names";
+
+export { cleanName };
 
 function key(x: number, y: number) {
   return `${x},${y}`;
@@ -1865,9 +1862,9 @@ async function found(
   input: { name: string; sheikh: string; trait: string; lineage?: string },
 ): Promise<string | null> {
   const name = cleanName(input.name);
-  if (!name) return "الاسم حرفان إلى ثمانية عشر، من غير رموز.";
+  if (!name) return "الاسم حرفان إلى ثمانية عشر، من غير رموز ولا ألفاظ نابية ولا انتحال للإدارة.";
   const sheikh = cleanName(input.sheikh);
-  if (!sheikh) return "اسم الشيخ حرفان إلى ثمانية عشر.";
+  if (!sheikh) return "اسم الشيخ حرفان إلى ثمانية عشر، من غير ألفاظ نابية ولا انتحال للإدارة.";
   const line = lineageBy(input.lineage);
   const trait = line ? line.trait : input.trait;
   if (!isSheikhTrait(trait)) return "خصلة الشيخ غير معروفة.";

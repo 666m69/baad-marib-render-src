@@ -18,15 +18,20 @@ services:
         value: "22"
       - key: NITRO_PRESET
         value: node-server
+      - key: NODE_ENV
+        value: production
+      # Render's proxy appends one X-Forwarded-For hop (CF-Connecting-IP is preferred).
+      - key: TRUST_PROXY_HOPS
+        value: "1"
       # Neon Frankfurt, pooled endpoint ("-pooler" host) with ?sslmode=require.
       - key: DATABASE_URL
         sync: false
-      # 32+ random bytes. Without it every instance makes its own and sessions break.
+      # 32+ random characters. Required: the server will not start without it.
       - key: BETTER_AUTH_SECRET
         sync: false
-      # Public URL of the service, e.g. https://baad-marib.onrender.com
+      # Public https URL of the service, e.g. https://baad-marib.onrender.com. Required.
       - key: BETTER_AUTH_URL
         sync: false
-      # Owner's address. The account must have a verified email (see .env.example).
+      # Owner's address. The account must also be verified once (docs/deploy.md).
       - key: ADMIN_EMAIL
         sync: false

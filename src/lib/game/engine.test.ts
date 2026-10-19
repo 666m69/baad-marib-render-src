@@ -176,3 +176,12 @@ test("the founding report names a documented or fictional poet, never a Companio
   assert.match(text, /أحيحة بن الجلاح/);
   assert.doesNotMatch(text, /حسان بن ثابت|كعب بن مالك/);
 });
+
+test("founding refuses profane or staff-posing names, for the tribe and the sheikh", async () => {
+  const bad = await engine.foundTribe("u-bad", { name: "صـاحب الديوان", sheikh: "سيف", trait: "guard", lineage: "aws" });
+  assert.equal(bad.ok, false);
+  const badSheikh = await engine.foundTribe("u-bad", { name: "همدان", sheikh: "Adm1n", trait: "guard", lineage: "aws" });
+  assert.equal(badSheikh.ok, false);
+  assert.equal(await row("u-bad"), undefined);
+  await found("u-good", "خولان");
+});

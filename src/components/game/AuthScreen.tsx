@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { SIGN_IN_PROVIDERS, authClient, signIn } from "@/lib/auth/client";
+import { authClient } from "@/lib/auth/client";
 import { Btn, Field, inputClass } from "./ui";
 import { ValleyMark } from "./Mark";
 
@@ -138,24 +138,6 @@ export function AuthScreen() {
                 : "ادخل الوادي"}
           </Btn>
         </form>
-        {SIGN_IN_PROVIDERS.length > 0 && (
-          <div className="grid gap-2">
-            {SIGN_IN_PROVIDERS.map((provider) => (
-              <Btn
-                key={provider.providerId}
-                type="button"
-                variant="ghost"
-                onClick={() => {
-                  void signIn(provider.providerId, { callbackURL: "/" }).catch(
-                    () => setError("تعذّر الدخول عبر المزود."),
-                  );
-                }}
-              >
-                المتابعة عبر {provider.label}
-              </Btn>
-            ))}
-          </div>
-        )}
       </div>
     </main>
   );
