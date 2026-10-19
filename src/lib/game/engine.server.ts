@@ -67,7 +67,6 @@ import {
   growPeople,
   capsOf,
   emptyLevels,
-  fitIncome,
   spillNote,
   studyOpen,
   takeLoot,
@@ -416,22 +415,42 @@ async function refund(sql: Sql, userId: string, cost: Cost) {
 
 /** Add income under the caps. Whatever does not fit is lost and returned for the report. */
 async function creditCapped(sql: Sql, userId: string, add: Stock) {
-  const rows = await sql<Row>`select water, food, gold, wood, stone from tribes where user_id = ${userId}`;
-  const row = rows[0];
   const none: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
-  if (!row) return { gain: none, lost: none };
   const caps = capsOf(await columnMap(sql, userId));
-  const stock: Stock = { water: num(row.water), food: num(row.food), gold: num(row.gold), wood: num(row.wood), stone: num(row.stone) };
-  const { gain, lost } = fitIncome(stock, add, caps);
-  await sql`
-    update tribes set
-      water = water + ${gain.water},
-      food = food + ${gain.food},
-      gold = gold + ${gain.gold},
-      wood = wood + ${gain.wood},
-      stone = stone + ${gain.stone}
-    where user_id = ${userId}
+  const put = (good: keyof Stock) => Math.max(0, Math.floor(add[good]));
+  // One atomic statement: the cap is applied in SQL against the row as it is now,
+  // and a stock already above its cap is never pushed down.
+  const rows = await sql<Row>`
+    with old as (
+      select user_id, water, food, gold, wood, stone from tribes where user_id = ${userId} for update
+    )
+    update tribes t set
+      water = greatest(t.water, least(${caps.water}, t.water + ${put("water")})),
+      food = greatest(t.food, least(${caps.food}, t.food + ${put("food")})),
+      gold = greatest(t.gold, least(${caps.gold}, t.gold + ${put("gold")})),
+      wood = greatest(t.wood, least(${caps.wood}, t.wood + ${put("wood")})),
+      stone = greatest(t.stone, least(${caps.stone}, t.stone + ${put("stone")}))
+    from old
+    where t.user_id = old.user_id
+    returning old.water as w0, old.food as f0, old.gold as g0, old.wood as d0, old.stone as s0,
+              t.water as w1, t.food as f1, t.gold as g1, t.wood as d1, t.stone as s1
   `;
+  const row = rows[0];
+  if (!row) return { gain: none, lost: none };
+  const gain: Stock = {
+    water: num(row.w1) - num(row.w0),
+    food: num(row.f1) - num(row.f0),
+    gold: num(row.g1) - num(row.g0),
+    wood: num(row.d1) - num(row.d0),
+    stone: num(row.s1) - num(row.s0),
+  };
+  const lost: Stock = {
+    water: put("water") - gain.water,
+    food: put("food") - gain.food,
+    gold: put("gold") - gain.gold,
+    wood: put("wood") - gain.wood,
+    stone: put("stone") - gain.stone,
+  };
   return { gain, lost };
 }
 
@@ -610,6 +629,7 @@ async function accrue(sql: Sql) {
     flagsBy.set(id, list);
   }
   const pasture = await readPastures(sql, Date.now());
+  const rows: (string | number)[][] = [];
   for (const tribe of tribes) {
     const id = String(tribe.user_id);
     const levels = byUser.get(id) ?? emptyLevels(1);
@@ -640,18 +660,34 @@ async function accrue(sql: Sql) {
       stone: accrueGood(num(tribe.stone), num(tribe.stone_bank), bonusRates.stone, ms, cap),
     };
     const folk = growPeople(num(tribe.people), num(tribe.people_bank), num(tribe.food), ms, pcap, grow, PEOPLE_FOOD_GATE);
-    await sql`
-      update tribes set
-        water = ${grown.water.stock}, water_bank = ${grown.water.bank},
-        food = ${grown.food.stock}, food_bank = ${grown.food.bank},
-        gold = ${grown.gold.stock}, gold_bank = ${grown.gold.bank},
-        wood = ${grown.wood.stock}, wood_bank = ${grown.wood.bank},
-        stone = ${grown.stone.stock}, stone_bank = ${grown.stone.bank},
-        people = ${folk.people}, people_bank = ${folk.bank},
-        last_tick = now()
-      where user_id = ${id}
-    `;
+    rows.push([
+      id,
+      grown.water.stock, grown.water.bank,
+      grown.food.stock, grown.food.bank,
+      grown.gold.stock, grown.gold.bank,
+      grown.wood.stock, grown.wood.bank,
+      grown.stone.stock, grown.stone.bank,
+      folk.people, folk.bank,
+    ]);
   }
+  if (!rows.length) return;
+  // One statement for the whole valley instead of one per tribe.
+  const col = (i: number) => rows.map((row) => row[i]);
+  await sql.query(
+    `update tribes t set
+       water = v.water, water_bank = v.water_bank,
+       food = v.food, food_bank = v.food_bank,
+       gold = v.gold, gold_bank = v.gold_bank,
+       wood = v.wood, wood_bank = v.wood_bank,
+       stone = v.stone, stone_bank = v.stone_bank,
+       people = v.people, people_bank = v.people_bank,
+       last_tick = now()
+     from unnest($1::text[], $2::int[], $3::int[], $4::int[], $5::int[], $6::int[], $7::int[],
+                 $8::int[], $9::int[], $10::int[], $11::int[], $12::int[], $13::int[])
+       as v(user_id, water, water_bank, food, food_bank, gold, gold_bank, wood, wood_bank, stone, stone_bank, people, people_bank)
+     where t.user_id = v.user_id`,
+    Array.from({ length: 13 }, (_, i) => col(i)),
+  );
 }
 
 async function finishTraining(sql: Sql) {
@@ -1891,7 +1927,7 @@ async function found(
     "found",
     "نُصبت المضارب",
     said(
-      `خرجت ${name} من أثر السد، وحطّت في الوادي. شيخها ${sheikh}${line ? `، وشاعرها ${poetLine(line)}` : ""}. ${line ? line.gift : ""} ${pastureLine} درع المبتدئ قائم ${START.peaceMin} دقيقة، ويسقط إن شهرت السلاح.`,
+      `خرجت ${name} من أثر السد، وحطّت في الوادي. شيخها ${sheikh}${line ? `، وشاعرها ${poetLine(line)}` : ""}. ${line ? line.gift : ""} ${pastureLine} درع المبتدئ قائم ${START.peaceMin} دقيقة. قتال العصابات والصعاليك لا يُسقطه، ومهاجمة مضارب قبيلة أخرى تُسقطه.`,
     ),
     true,
   );
@@ -1923,6 +1959,7 @@ function cellBlockedFor(
 
 async function withWorld(userId: string, fn: (sql: Sql) => Promise<string | null>): Promise<GameResult> {
   return locked(async (sql) => {
+    await sql`update world_meta set last_tick = now() where id = 1`;
     await tick(sql);
     const error = await fn(sql);
     if (error) return { ok: false, error };
@@ -1930,9 +1967,17 @@ async function withWorld(userId: string, fn: (sql: Sql) => Promise<string | null
   });
 }
 
+/** Reads tick the valley at most once per TICK_EVERY_SEC across all players; writes always tick. */
+const TICK_EVERY_SEC = 5;
+
 export function loadWorld(userId: string) {
   return locked(async (sql) => {
-    await tick(sql);
+    const due = await sql<Row>`
+      update world_meta set last_tick = now()
+      where id = 1 and (last_tick is null or last_tick <= now() - make_interval(secs => ${TICK_EVERY_SEC}))
+      returning id
+    `;
+    if (due.length) await tick(sql);
     return snapshot(sql, userId);
   });
 }
@@ -2138,7 +2183,7 @@ export function extendPeace(userId: string) {
   return withWorld(userId, async (sql) => {
     const tribe = await requireTribe(sql, userId);
     if (!tribe) return "انصب مضاربك أولًا.";
-    if (flag(tribe.attacked)) return "من شهر السيف لا يرجع إلى درع المبتدئ.";
+    if (flag(tribe.attacked)) return "من هاجم قبيلة لا يرجع إلى درع المبتدئ.";
     const cost = peaceExtendCost(num(tribe.peace_extends));
     const ahead = MAX_PEACE_AHEAD_MS / 1000 - PEACE_EXTEND_MIN * 60;
     const updated = await sql<Row>`

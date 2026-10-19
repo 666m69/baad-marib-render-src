@@ -1,0 +1,13 @@
+node_modules/
+.data/
+.env
+.env.*
+!.env.example
+dist/
+.output/
+.nitro/
+.tanstack/
+.vercel/
+*.db
+*.sqlite
+*.log

@@ -142,7 +142,7 @@ const grokUserInfoUrl = `${issuerBase}/api/auth/oauth2/userinfo`;
 // schema from `migrations/auth/0001_auth.sql`, copied into `migrations/` when
 // the app turns sign-in on.
 const database = databaseUrl
-  ? new Pool({ connectionString: databaseUrl })
+  ? new Pool({ connectionString: databaseUrl, max: 3, idleTimeoutMillis: 10_000 })
   : { dialect: pgliteDialect(() => getPglite()), type: "postgres" as const };
 
 /** Session token cookie name — also read by the live-preview popup completion page. */
@@ -198,9 +198,11 @@ export const auth = betterAuth({
         ...GROK_PROVIDERS.map((p) => p.providerId),
         GATE_PROVIDER_ID,
       ],
-      // X's synthetic email is never "verified", so don't gate linking on the
-      // local user's email-verified state.
-      requireLocalEmailVerified: false,
+      // «بعد مأرب» signs in with email only (Google/X hidden), and email sign-up
+      // is not verified. Never attach an OAuth identity to an unverified local
+      // account: that would let someone pre-register a victim's email and keep
+      // access after the victim signs in with a provider.
+      requireLocalEmailVerified: true,
     },
   },
 

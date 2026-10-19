@@ -1,0 +1,32 @@
+# Render Blueprint for «بعد مأرب». Free web service in Frankfurt, next to Neon (aws-eu-central-1).
+# NO SECRETS IN THIS FILE: every secret is `sync: false`, so Render asks for it in the dashboard.
+# Not deployed yet. DevOps sets up Neon and fills the values.
+services:
+  - type: web
+    name: baad-marib
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: main
+    autoDeploy: false
+    # The build runs the migrations (scripts/migrate.mjs), so DATABASE_URL must be set before the first deploy.
+    buildCommand: npm ci && npm run build
+    startCommand: node .output/server/index.mjs
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NITRO_PRESET
+        value: node-server
+      # Neon Frankfurt, pooled endpoint ("-pooler" host) with ?sslmode=require.
+      - key: DATABASE_URL
+        sync: false
+      # 32+ random bytes. Without it every instance makes its own and sessions break.
+      - key: BETTER_AUTH_SECRET
+        sync: false
+      # Public URL of the service, e.g. https://baad-marib.onrender.com
+      - key: BETTER_AUTH_URL
+        sync: false
+      # Owner's address. The account must have a verified email (see .env.example).
+      - key: ADMIN_EMAIL
+        sync: false

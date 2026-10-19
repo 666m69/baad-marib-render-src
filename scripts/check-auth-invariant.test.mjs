@@ -14,6 +14,10 @@ import {
 } from "./check-auth-invariant.mjs";
 import { projectRoot } from "./with-app-env.mjs";
 
+// Skipped in «بعد مأرب»: Grok App Builder platform file .grok/app-env.json is not part of this repo; «بعد مأرب» ships auth ON on purpose.
+const SKIP_9000 = 'Grok App Builder platform file .grok/app-env.json is not part of this repo; «بعد مأرب» ships auth ON on purpose';
+
+
 /**
  * The JSON body `/__app-env` would serve. Do not start a real Vite server —
  * `import { createServer } from "vite"` loads rolldown native bindings that
@@ -90,7 +94,7 @@ test("only a divergence warns the smoke verdict", () => {
   }
 });
 
-test("the build side resolves the template's shipped app-env", () => {
+test("the build side resolves the template's shipped app-env", { skip: SKIP_9000 }, () => {
   assert.equal(buildAuthEnabled(projectRoot(), {}), false);
   assert.equal(buildAuthEnabled(projectRoot(), { VITE_AUTH_ENABLED: "true" }), true);
 });

@@ -20,6 +20,16 @@ const databaseUrl =
 export const dbSource: DbSource = databaseUrl ? "neon" : "pglite";
 
 /**
+ * Tests only: `PGLITE_MEMORY=1` opens a throwaway in-memory PGLite and reads
+ * migrations from disk, so engine tests never touch `/workspace/.data`.
+ */
+const memoryDb =
+  typeof process !== "undefined" && process.env.PGLITE_MEMORY === "1" && !databaseUrl;
+
+/** Connections per pool. Neon's free tier is small; keep both pools (app + auth) modest. */
+export const POOL_MAX = 4;
+
+/**
  * Minimal shared SQL surface, satisfied by both Neon and PGLite. Both the
  * tagged-template and `.query()` forms resolve to an array of row objects:
  *
@@ -74,6 +84,7 @@ const VALLEY_TAR = "/workspace/.data/valley.tar";
 
 /** Copy a still-in-memory valley to disk once, before the next restart opens the file. */
 async function snapshotValley(pg: import("@electric-sql/pglite").PGlite) {
+  if (memoryDb) return;
   if (existsSync(`${VALLEY_DIR}/PG_VERSION`) || existsSync(VALLEY_TAR)) return;
   const dump = await pg.dumpDataDir();
   const bytes = new Uint8Array(await dump.arrayBuffer());
@@ -90,6 +101,7 @@ async function openValley() {
     [OID_DATE]: identity,
     [OID_INTERVAL]: identity,
   };
+  if (memoryDb) return new PGlite({ parsers });
   mkdirSync("/workspace/.data", { recursive: true });
   if (!existsSync(`${VALLEY_DIR}/PG_VERSION`) && existsSync(VALLEY_TAR)) {
     const tar = readFileSync(VALLEY_TAR);
@@ -124,7 +136,7 @@ function neonPool(): Promise<import("pg").Pool> {
     types.setTypeParser(OID_INT8, Number);
     types.setTypeParser(OID_DATE, identity);
     types.setTypeParser(OID_INTERVAL, identity);
-    return new Pool({ connectionString: databaseUrl });
+    return new Pool({ connectionString: databaseUrl, max: POOL_MAX, idleTimeoutMillis: 10_000 });
   })().catch((err) => {
     globalRef.__pgPool__ = undefined;
     throw err;
@@ -172,11 +184,13 @@ async function createPgliteSql(): Promise<Sql> {
   // passes serialized on a global chain so concurrent callers never
   // double-apply.
   const migrate = async (): Promise<void> => {
-    const migrations = import.meta.glob("/migrations/*.sql", {
-      query: "?raw",
-      import: "default",
-      eager: true,
-    }) as Record<string, string>;
+    const migrations = memoryDb
+      ? await diskMigrations()
+      : (import.meta.glob("/migrations/*.sql", {
+          query: "?raw",
+          import: "default",
+          eager: true,
+        }) as Record<string, string>);
     const doneRows = await pg.query<{ name: string }>(
       "select name from _migrations",
     );
@@ -229,6 +243,15 @@ export async function withTransaction<T>(fn: (tx: Sql) => Promise<T>): Promise<T
   const pg = await globalRef.__pgliteInstance__;
   if (!pg) throw new Error("PGLite instance failed to initialize");
   return pg.transaction((tx) => fn(toSql(async <R>(text: string, params: unknown[]) => (await tx.query<R>(text, params)).rows)));
+}
+
+/** Tests only (PGLITE_MEMORY=1): the same top-level migrations/*.sql, read from disk. */
+async function diskMigrations(): Promise<Record<string, string>> {
+  const { readdirSync } = await import("node:fs");
+  const dir = new URL("../../migrations/", import.meta.url).pathname;
+  const out: Record<string, string> = {};
+  for (const name of readdirSync(dir)) if (name.endsWith(".sql")) out[`/migrations/${name}`] = readFileSync(dir + name, "utf8");
+  return out;
 }
 
 let sqlPromise: Promise<Sql> | null = null;

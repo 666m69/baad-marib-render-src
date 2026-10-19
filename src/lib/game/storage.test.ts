@@ -74,6 +74,15 @@ test("spill note names what was lost to the storehouse", () => {
   assert.match(note, /5 ماء/);
 });
 
+test("gold lost to the cap is blamed on بيت المال, not the storehouse", () => {
+  const gold = spillNote({ water: 0, food: 0, gold: 30, wood: 0, stone: 0 });
+  assert.match(gold, /30 ذهب لضيق بيت المال/);
+  assert.doesNotMatch(gold, /المخزن/);
+  const both = spillNote({ water: 0, food: 4, gold: 30, wood: 0, stone: 0 });
+  assert.match(both, /4 طعام لضيق المخزن/);
+  assert.match(both, /30 ذهب لضيق بيت المال/);
+});
+
 test("bar warns from 80% and is full at the cap", () => {
   assert.equal(capState(2399, 3000), "ok");
   assert.equal(capState(2400, 3000), "warn");
@@ -166,4 +175,22 @@ test("storehouse card shows the next cap", () => {
   assert.ok(row);
   assert.equal(row.now, "3,000");
   assert.equal(row.next, "4,500");
+});
+
+test("banked accrual: 6/min polled every 8 s for 96 s gives 9, not 0", async () => {
+  const { accrueGood } = await import("./balance");
+  let state = { stock: 0, bank: 0 };
+  for (let i = 0; i < 12; i++) state = accrueGood(state.stock, state.bank, 6, 8000, 3000);
+  assert.equal(state.stock, 9);
+  assert.equal(state.bank, 600);
+  assert.deepEqual(accrueGood(2999, 900, 60, 60_000, 3000), { stock: 3000, bank: 0 });
+  assert.deepEqual(accrueGood(5000, 10, 60, 60_000, 3000), { stock: 5000, bank: 0 });
+  assert.deepEqual(accrueGood(10, 5, 0, 60_000, 3000), { stock: 10, bank: 5 });
+});
+
+test("people growth keeps its remainder too", async () => {
+  const { growPeople } = await import("./balance");
+  assert.deepEqual(growPeople(5, 0, 100, 8000, 50, 20_000, 40), { people: 5, bank: 8000 });
+  assert.deepEqual(growPeople(5, 16_000, 100, 8000, 50, 20_000, 40), { people: 6, bank: 4000 });
+  assert.deepEqual(growPeople(5, 0, 10, 8000, 50, 20_000, 40), { people: 5, bank: 0 });
 });

@@ -8,12 +8,14 @@ import { barterGoods, claimGuide, claimOath, claimPasture, diwanGate, expandSanc
 import { RESOURCE_LABEL, TRAITS, capState, chebyshev, lineageBy, type Good, type OathKind } from "@/lib/game/balance";
 import { coachLesson, type CoachLesson } from "@/lib/game/coach";
 import { fmt, fmtRemain, tribeCount } from "@/lib/game/format";
+import { POLL_GATE_MS, POLL_WORLD_MS } from "@/lib/game/polling";
 import { thud, unlockAudio } from "@/lib/game/sfx";
 import type { BuildingKind, StudyKind, TroopKind } from "@/lib/game/balance";
 import type { GameResult, WorldSnapshot, YouState } from "@/lib/game/types";
 import { AuthScreen } from "./AuthScreen";
 import { CoachCard } from "./Coach";
 import { MapView } from "./MapView";
+import { usePoll } from "./usePoll";
 import { ValleyMark } from "./Mark";
 import { AboutSheet, ArmyPanel, CampPanel, FoundPanel, ReportsPanel, TileSheet } from "./Panels";
 import { Btn } from "./ui";
@@ -48,13 +50,19 @@ export function GameApp() {
 
 function Authed({ userId }: { userId: string }) {
   const queryClient = useQueryClient();
+  const worldPoll = usePoll(POLL_WORLD_MS);
+  const gatePoll = usePoll(POLL_GATE_MS);
   const query = useQuery({
     queryKey: ["world", userId],
     queryFn: () => getWorld(),
-    refetchInterval: 8000,
+    refetchInterval: worldPoll,
+    refetchIntervalInBackground: false,
   });
   const [tab, setTab] = useState<Tab>("map");
   const [campFocus, setCampFocus] = useState<{ kind: BuildingKind; at: number } | null>(null);
+  useEffect(() => {
+    if (tab !== "camp") setCampFocus(null);
+  }, [tab]);
   const raise = (kind: BuildingKind) => {
     setCampFocus({ kind, at: Date.now() });
     setTab("camp");
@@ -71,7 +79,8 @@ function Authed({ userId }: { userId: string }) {
   const gate = useQuery({
     queryKey: ["diwan-gate", userId],
     queryFn: () => diwanGate(),
-    refetchInterval: 20000,
+    refetchInterval: gatePoll,
+    refetchIntervalInBackground: false,
   });
   const desk = gate.data;
   const skew = useRef(0);
