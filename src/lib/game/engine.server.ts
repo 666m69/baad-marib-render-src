@@ -60,6 +60,12 @@ import {
   SCOUT_GOLD,
   SCOUT_HOLD_MIN,
   storageCap,
+  poetLine,
+  attackDropsShield,
+  capsOf,
+  emptyLevels,
+  fitIncome,
+  spillNote,
   studyOpen,
   takeLoot,
   traitFactor,
@@ -292,12 +298,7 @@ async function finishClaims(sql: Sql) {
       placed = inserted.length > 0;
     }
     if (!placed) {
-      await sql`
-        update tribes set
-          food = food + ${num(row.claim_food)},
-          gold = gold + ${num(row.claim_gold)}
-        where user_id = ${id}
-      `;
+      await creditCapped(sql, id, { water: 0, food: num(row.claim_food), gold: num(row.claim_gold), wood: 0, stone: 0 });
     }
     await sql`
       update tribes set
@@ -313,7 +314,7 @@ async function finishClaims(sql: Sql) {
 
 async function columnMap(sql: Sql, userId: string) {
   const rows = await sql<Row>`select kind, level from buildings where user_id = ${userId}`;
-  const levels: Record<BuildingKind, number> = { tent: 0, well: 0, farm: 0, workshop: 0, barracks: 0 };
+  const levels: Record<BuildingKind, number> = emptyLevels(0);
   for (const row of rows) {
     const kind = String(row.kind) as BuildingKind;
     if (kind in levels) levels[kind] = num(row.level);
@@ -411,16 +412,47 @@ async function spend(sql: Sql, userId: string, cost: Cost) {
 }
 
 async function refund(sql: Sql, userId: string, cost: Cost) {
+  await creditCapped(sql, userId, cost);
+  if (cost.people) await sql`update tribes set people = people + ${cost.people} where user_id = ${userId}`;
+}
+
+/** Add income under the caps. Whatever does not fit is lost and returned for the report. */
+async function creditCapped(sql: Sql, userId: string, add: Stock) {
+  const rows = await sql<Row>`select water, food, gold, wood, stone from tribes where user_id = ${userId}`;
+  const row = rows[0];
+  const none: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
+  if (!row) return { gain: none, lost: none };
+  const caps = capsOf(await columnMap(sql, userId));
+  const stock: Stock = { water: num(row.water), food: num(row.food), gold: num(row.gold), wood: num(row.wood), stone: num(row.stone) };
+  const { gain, lost } = fitIncome(stock, add, caps);
   await sql`
     update tribes set
-      water = water + ${cost.water},
-      food = food + ${cost.food},
-      gold = gold + ${cost.gold},
-      wood = wood + ${cost.wood},
-      stone = stone + ${cost.stone},
-      people = people + ${cost.people}
+      water = water + ${gain.water},
+      food = food + ${gain.food},
+      gold = gold + ${gain.gold},
+      wood = wood + ${gain.wood},
+      stone = stone + ${gain.stone}
     where user_id = ${userId}
   `;
+  return { gain, lost };
+}
+
+/** Hand back a pending pasture claim's cost (capped) and clear the claim. */
+async function returnClaim(sql: Sql, userId: string) {
+  const rows = await sql<Row>`
+    update tribes t set
+      claim_x = null,
+      claim_y = null,
+      claim_food = 0,
+      claim_gold = 0,
+      claim_until = null
+    from (select user_id, claim_food, claim_gold from tribes where user_id = ${userId}) old
+    where t.user_id = old.user_id
+    returning old.claim_food as food, old.claim_gold as gold
+  `;
+  const row = rows[0];
+  if (!row) return;
+  await creditCapped(sql, userId, { water: 0, food: num(row.food), gold: num(row.gold), wood: 0, stone: 0 });
 }
 
 async function noteClash(
@@ -554,7 +586,7 @@ async function accrue(sql: Sql) {
   const flagsBy = new Map<string, string[]>();
   for (const row of buildings) {
     const id = String(row.user_id);
-    const bag = byUser.get(id) ?? { tent: 0, well: 0, farm: 0, workshop: 0, barracks: 0 };
+    const bag = byUser.get(id) ?? emptyLevels(0);
     const kind = String(row.kind) as BuildingKind;
     if (kind in bag) bag[kind] = num(row.level);
     byUser.set(id, bag);
@@ -576,7 +608,7 @@ async function accrue(sql: Sql) {
   const pasture = await readPastures(sql, Date.now());
   for (const tribe of tribes) {
     const id = String(tribe.user_id);
-    const levels = byUser.get(id) ?? { tent: 1, well: 0, farm: 0, workshop: 0, barracks: 0 };
+    const levels = byUser.get(id) ?? emptyLevels(1);
     const sanctuary = Math.max(1, num(tribe.sanctuary));
     let bonusRates = applyStudies(ratesPerMin(levels, sanctuary, fieldsBy.get(id) ?? []), flagsOf(flagsBy.get(id) ?? []));
     if (played(tribe) === "water") {
@@ -590,7 +622,8 @@ async function accrue(sql: Sql) {
       wood: bonusRates.wood + extra.wood,
       stone: bonusRates.stone + extra.stone,
     };
-    const cap = storageCap(levels.tent || 1);
+    const cap = storageCap(levels.storehouse);
+    const gcap = capsOf(levels).gold;
     const pcap = peopleCap(levels.tent || 1);
     const grow = peopleGrowMs(levels.tent || 1);
     await sql`
@@ -605,7 +638,7 @@ async function accrue(sql: Sql) {
       update tribes t set
         water = case when t.water >= ${cap} then t.water else least(${cap}, t.water + (${bonusRates.water} * d.sec) / 60) end,
         food = case when t.food >= ${cap} then t.food else least(${cap}, t.food + (${bonusRates.food} * d.sec) / 60) end,
-        gold = case when t.gold >= ${cap} then t.gold else least(${cap}, t.gold + (${bonusRates.gold} * d.sec) / 60) end,
+        gold = case when t.gold >= ${gcap} then t.gold else least(${gcap}, t.gold + (${bonusRates.gold} * d.sec) / 60) end,
         wood = case when t.wood >= ${cap} then t.wood else least(${cap}, t.wood + (${bonusRates.wood} * d.sec) / 60) end,
         stone = case when t.stone >= ${cap} then t.stone else least(${cap}, t.stone + (${bonusRates.stone} * d.sec) / 60) end,
         people = case
@@ -668,9 +701,9 @@ async function finishMoves(sql: Sql) {
     const ownKey = own ? key(num(own.x), num(own.y)) : "";
     if (!inBounds(x, y) || (taken.has(spot) && spot !== ownKey)) {
       const refundGold = num(row.move_cost);
+      await creditCapped(sql, id, { water: 0, food: 0, gold: refundGold, wood: 0, stone: 0 });
       await sql`
         update tribes set
-          gold = gold + ${refundGold},
           move_x = null,
           move_y = null,
           move_until = null,
@@ -701,17 +734,7 @@ async function finishMoves(sql: Sql) {
     `;
     if (moved.length) {
       taken.add(spot);
-      await sql`
-        update tribes set
-          food = food + claim_food,
-          gold = gold + claim_gold,
-          claim_x = null,
-          claim_y = null,
-          claim_food = 0,
-          claim_gold = 0,
-          claim_until = null
-        where user_id = ${id}
-      `;
+      await returnClaim(sql, id);
       await sql`delete from pastures where user_id = ${id}`;
       await grantStarter(sql, id, x, y);
     }
@@ -1046,6 +1069,7 @@ async function resolveOne(sql: Sql, march: Row) {
     const dCav = Math.max(0, num(bandit.cavalry) - battle.defCavLoss);
     const label = banditLabel(num(bandit.tier));
     let loot: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
+    let spill = "";
     if (battle.attackerWins) {
       loot = takeLoot(
         {
@@ -1060,15 +1084,9 @@ async function resolveOne(sql: Sql, march: Row) {
       loot = swell(loot, atkTrait, atkRenown);
       await praise(sql, attackerId);
       await sql`delete from bandits where id = ${num(bandit.id)}`;
-      await sql`
-        update tribes set
-          water = water + ${loot.water},
-          food = food + ${loot.food},
-          gold = gold + ${loot.gold},
-          wood = wood + ${loot.wood},
-          stone = stone + ${loot.stone}
-        where user_id = ${attackerId}
-      `;
+      const credited = await creditCapped(sql, attackerId, loot);
+      loot = credited.gain;
+      spill = spillNote(credited.lost);
     } else if (dInf + dCav <= 0) {
       await sql`delete from bandits where id = ${num(bandit.id)}`;
     } else {
@@ -1082,7 +1100,7 @@ async function resolveOne(sql: Sql, march: Row) {
       battle.attackerWins ? `نصر على ${label}` : `هزيمة أمام ${label}`,
       `المواجهة مع ${label}. قوّتك ${troopPhrase(infantry, cavalry)}، وخسائرك ${troopPhrase(battle.atkInfLoss, battle.atkCavLoss)}. ${
         lootText ? `الغنائم: ${lootText}.` : "لا غنائم."
-      } ${leftInf + leftCav > 0 ? "الناجون في طريق العودة." : "لم يعد أحد."}`,
+      }${spill ? ` ${spill}` : ""} ${leftInf + leftCav > 0 ? "الناجون في طريق العودة." : "لم يعد أحد."}`,
       battle.attackerWins,
     );
     await noteClash(
@@ -1111,6 +1129,7 @@ async function resolveOne(sql: Sql, march: Row) {
     const leftCav = Math.max(0, cavalry - battle.atkCavLoss);
     const dCav = Math.max(0, num(man.cavalry) - battle.defCavLoss);
     let loot: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
+    let spill = "";
     if (battle.attackerWins) {
       loot = swell(
         takeLoot({ water: 0, food: num(man.food), gold: num(man.gold), wood: 0, stone: 0 }, carryOf(infantry, cavalry)),
@@ -1118,10 +1137,9 @@ async function resolveOne(sql: Sql, march: Row) {
         atkRenown,
       );
       await sql`delete from saalik where id = ${num(man.id)}`;
-      await sql`
-        update tribes set food = food + ${loot.food}, gold = gold + ${loot.gold}
-        where user_id = ${attackerId}
-      `;
+      const credited = await creditCapped(sql, attackerId, loot);
+      loot = credited.gain;
+      spill = spillNote(credited.lost);
       await praise(sql, attackerId);
     } else if (dCav <= 0) {
       await sql`delete from saalik where id = ${num(man.id)}`;
@@ -1135,7 +1153,7 @@ async function resolveOne(sql: Sql, march: Row) {
       attackerId,
       "attack",
       battle.attackerWins ? `نصر على ${label}` : `هزيمة أمام ${label}`,
-      `المواجهة مع الصعلوك ${label}. خسائرك ${troopPhrase(battle.atkInfLoss, battle.atkCavLoss)}. ${lootText ? `الغنائم: ${lootText}.` : "لا غنائم."}`,
+      `المواجهة مع الصعلوك ${label}. خسائرك ${troopPhrase(battle.atkInfLoss, battle.atkCavLoss)}. ${lootText ? `الغنائم: ${lootText}.` : "لا غنائم."}${spill ? ` ${spill}` : ""}`,
       battle.attackerWins,
     );
     await noteClash(
@@ -1225,18 +1243,15 @@ async function resolveOne(sql: Sql, march: Row) {
       stone = greatest(0, stone - ${loot.stone})
     where user_id = ${defenderId}
   `;
+  let kept = loot;
+  let spill = "";
   if (battle.attackerWins && onDirah) {
-    await sql`
-      update tribes set
-        water = water + ${loot.water},
-        food = food + ${loot.food},
-        gold = gold + ${loot.gold},
-        wood = wood + ${loot.wood},
-        stone = stone + ${loot.stone}
-      where user_id = ${attackerId}
-    `;
+    const credited = await creditCapped(sql, attackerId, loot);
+    kept = credited.gain;
+    spill = spillNote(credited.lost);
   }
   const lootText = lootPhrase(loot);
+  const keptText = lootPhrase(kept);
   const defName = String(defender.name);
   await writeReport(
     sql,
@@ -1244,8 +1259,8 @@ async function resolveOne(sql: Sql, march: Row) {
     "attack",
     battle.attackerWins ? `نصر على ${defName}` : `هزيمة أمام ${defName}`,
     `قال الراوي: هجوم على ${defName}. أرسلت ${troopPhrase(infantry, cavalry)}. خسائرك ${troopPhrase(battle.atkInfLoss, battle.atkCavLoss)}. خسائرهم ${troopPhrase(battle.defInfLoss, battle.defCavLoss)}. ${
-      lootText ? `الغنائم: ${lootText}.` : "لم تُحمَل غنائم."
-    } ${leftInf + leftCav > 0 ? "الناجون يعودون." : "لم يعد أحد."}`,
+      keptText ? `الغنائم: ${keptText}.` : "لم تُحمَل غنائم."
+    }${spill ? ` ${spill}` : ""} ${leftInf + leftCav > 0 ? "الناجون يعودون." : "لم يعد أحد."}`,
     battle.attackerWins,
   );
   await writeReport(
@@ -1517,7 +1532,7 @@ async function snapshot(sql: Sql, userId: string): Promise<WorldSnapshot> {
     const id = String(row.user_id);
     const kind = String(row.kind) as BuildingKind;
     if (!BUILDING_KINDS.includes(kind)) continue;
-    const bag = levelsBy.get(id) ?? { tent: 0, well: 0, farm: 0, workshop: 0, barracks: 0 };
+    const bag = levelsBy.get(id) ?? emptyLevels(0);
     bag[kind] = num(row.level);
     levelsBy.set(id, bag);
     const list = buildViews.get(id) ?? [];
@@ -1553,7 +1568,7 @@ async function snapshot(sql: Sql, userId: string): Promise<WorldSnapshot> {
   for (const tribe of tribes) {
     const id = String(tribe.user_id);
     names.set(id, String(tribe.name));
-    const levels = levelsBy.get(id) ?? { tent: 1, well: 0, farm: 0, workshop: 0, barracks: 0 };
+    const levels = levelsBy.get(id) ?? emptyLevels(1);
     const flags = flagsOf(flagsBy.get(id) ?? []);
     const power = armyPower(num(tribe.infantry), num(tribe.cavalry)) + defenseOf(levels.tent, flags.rampart);
     const peaceUntil = epoch(tribe.peace_until);
@@ -1577,7 +1592,7 @@ async function snapshot(sql: Sql, userId: string): Promise<WorldSnapshot> {
 
   if (me) {
     const id = String(me.user_id);
-    const levels = levelsBy.get(id) ?? { tent: 1, well: 0, farm: 0, workshop: 0, barracks: 0 };
+    const levels = levelsBy.get(id) ?? emptyLevels(1);
     const flags = flagsOf(flagsBy.get(id) ?? []);
     const trainingRow = trainings.find((t) => String(t.user_id) === id);
     const away = marchRows
@@ -1651,7 +1666,8 @@ async function snapshot(sql: Sql, userId: string): Promise<WorldSnapshot> {
           }
         : null,
       rates,
-      storageCap: storageCap(levels.tent || 1),
+      storageCap: storageCap(levels.storehouse),
+      goldCap: capsOf(levels).gold,
       outbound: away,
       studies: STUDY_KINDS.map((kind) => {
         const found = (studyViews.get(id) ?? []).find((study) => study.kind === kind);
@@ -1660,7 +1676,7 @@ async function snapshot(sql: Sql, userId: string): Promise<WorldSnapshot> {
       sheikh: String(me.sheikh_name || "شيخ"),
       trait: asTrait(me.sheikh_trait),
       lineage: lineageBy(me.lineage) ? String(me.lineage) : "",
-      poet: lineageBy(me.lineage)?.poet ?? "",
+      poet: lineageBy(me.lineage) ? poetLine(lineageBy(me.lineage)!) : "",
       renown: num(me.renown),
       pacts: num(me.saalik_pacts),
       oaths: await oathBoard(sql, id, levels.well, num(me.cavalry)),
@@ -1879,7 +1895,7 @@ async function found(
     "found",
     "نُصبت المضارب",
     said(
-      `خرجت ${name} من أثر السد، وحطّت في الوادي. شيخها ${sheikh}${line ? `، وشاعرها ${line.poet}` : ""}. ${line ? line.gift : ""} ${pastureLine} درع المبتدئ قائم ${START.peaceMin} دقيقة، ويسقط إن شهرت السلاح.`,
+      `خرجت ${name} من أثر السد، وحطّت في الوادي. شيخها ${sheikh}${line ? `، وشاعرها ${poetLine(line)}` : ""}. ${line ? line.gift : ""} ${pastureLine} درع المبتدئ قائم ${START.peaceMin} دقيقة، ويسقط إن شهرت السلاح.`,
     ),
     true,
   );
@@ -2049,17 +2065,7 @@ export function releasePasture(userId: string, x: number, y: number) {
     `;
     if (!removed.length) return "هذا المربع ليس في سلسلتك.";
     if (num(tribe.claim_x) === x && num(tribe.claim_y) === y) {
-      await sql`
-        update tribes set
-          food = food + claim_food,
-          gold = gold + claim_gold,
-          claim_x = null,
-          claim_y = null,
-          claim_food = 0,
-          claim_gold = 0,
-          claim_until = null
-        where user_id = ${userId}
-      `;
+      await returnClaim(sql, userId);
     }
     return null;
   });
@@ -2373,12 +2379,13 @@ export function attack(
       destY = num(row.y);
       targetId = String(num(row.id));
     }
+    const dropShield = attackDropsShield(input.targetKind);
     const sent = await sql<Row>`
       update tribes set
         infantry = infantry - ${infantry},
         cavalry = cavalry - ${cavalry},
-        attacked = true,
-        peace_until = null
+        attacked = case when ${dropShield}::boolean then true else attacked end,
+        peace_until = case when ${dropShield}::boolean then null else peace_until end
       where user_id = ${userId}
         and infantry >= ${infantry}
         and cavalry >= ${cavalry}
@@ -2511,10 +2518,11 @@ export function claimOath(userId: string, kind: string) {
     const oath = board.find((item) => item.kind === kind);
     if (!oath?.done) return "لم يكتمل هذا العهد.";
     if (oath.claimed) return "قُبض هذا العهد.";
-    const cap = storageCap(levels.tent || 1);
+    const caps = capsOf(levels);
     const foodAdd = kind === "host" ? 50 : 0;
     const goldAdd = kind === "well" ? 60 : kind === "scout" ? 40 : 0;
-    if (num(tribe.food) + foodAdd > cap || num(tribe.gold) + goldAdd > cap) return "خيمة الشيخ لا تتسع. ارفعها لتأخذ الجائزة.";
+    if (num(tribe.food) + foodAdd > caps.food) return "المخزن لا يتسع. ارفع المخزن لتأخذ الجائزة.";
+    if (num(tribe.gold) + goldAdd > caps.gold) return "بيت المال لا يتسع. ارفع خيمة الشيخ لتأخذ الجائزة.";
     const inserted = await sql<Row>`
       insert into oaths (user_id, kind)
       values (${userId}, ${kind})
@@ -2540,8 +2548,10 @@ export function barter(userId: string, input: { give: string; take: string; lots
     const giveQty = lots * BARTER_GIVE;
     const getQty = barterTake(tribe.lineage, lots);
     const levels = await columnMap(sql, userId);
-    const cap = storageCap(levels.tent || 1);
-    if (num(tribe[input.take]) + getQty > cap) return "خيمة الشيخ لا تتسع. ارفعها ثم بدّل.";
+    const cap = capsOf(levels)[input.take];
+    if (num(tribe[input.take]) + getQty > cap) {
+      return input.take === "gold" ? "بيت المال لا يتسع. ارفع خيمة الشيخ ثم بدّل." : "المخزن لا يتسع. ارفع المخزن ثم بدّل.";
+    }
     const paid = await spend(sql, userId, goodCost(input.give, giveQty));
     if (!paid) return "ما معك لا يكفي للبدل.";
     const gain = goodCost(input.take, getQty);
@@ -2599,9 +2609,11 @@ export function claimGuide(userId: string, kind: string) {
     if (!(await guideReady(sql, userId, kind))) return "لم تكتمل المهمة بعد.";
     const reward = GUIDE_REWARD[kind];
     const levels = await columnMap(sql, userId);
-    const cap = storageCap(levels.tent || 1);
-    if (num(tribe.gold) + reward.gold > cap || num(tribe.food) + reward.food > cap) return "خيمة الشيخ لا تتسع. ارفعها لتأخذ الهدية.";
-    if (num(tribe.wood) + reward.wood > cap || num(tribe.stone) + reward.stone > cap) return "خيمة الشيخ لا تتسع. ارفعها لتأخذ الهدية.";
+    const caps = capsOf(levels);
+    if (num(tribe.gold) + reward.gold > caps.gold) return "بيت المال لا يتسع. ارفع خيمة الشيخ لتأخذ الهدية.";
+    if (num(tribe.food) + reward.food > caps.food || num(tribe.wood) + reward.wood > caps.wood || num(tribe.stone) + reward.stone > caps.stone) {
+      return "المخزن لا يتسع. ارفع المخزن لتأخذ الهدية.";
+    }
     const inserted = await sql<Row>`
       insert into guide_claims (user_id, kind)
       values (${userId}, ${kind})

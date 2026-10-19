@@ -20,6 +20,7 @@ import {
   paceOf,
   peaceExtendCost,
   playedTrait,
+  poetLine,
   RESOURCE_LABEL,
   SCOUT_GOLD,
   TRAIN,
@@ -110,7 +111,7 @@ export function FoundPanel({
       <div>
         <p className="text-xs text-faint">القبيلة · {people.name}</p>
         <p className="mt-1 text-sm text-muted">
-          شاعرها {people.poet}. {people.blurb} {people.gift}
+          شاعرها {poetLine(people)}. {people.blurb} {people.gift}
         </p>
         <div className="mt-2 grid grid-cols-2 gap-2">
           {LINEAGES.map((key) => (
@@ -135,7 +136,17 @@ export function FoundPanel({
   );
 }
 
-export function CampPanel({ you, now, actions }: { you: YouState; now: number; actions: GameActions }) {
+export function CampPanel({
+  you,
+  now,
+  actions,
+  focus = null,
+}: {
+  you: YouState;
+  now: number;
+  actions: GameActions;
+  focus?: { kind: BuildingKind; at: number } | null;
+}) {
   const rank = rankOf(developScore(you));
   const peaceLeft = you.peaceUntil ? you.peaceUntil - now : 0;
   const peaceCost = peaceExtendCost(you.peaceExtends);
@@ -165,7 +176,7 @@ export function CampPanel({ you, now, actions }: { you: YouState; now: number; a
         {you.pacts > 0 && <p className="mt-1 text-xs text-faint">صعلوك مبايع. من المغرب إلى الفجر غارتك بلا اسم، والطليعة تبقى مكشوفة.</p>}
       </section>
 
-      <CampMap you={you} now={now} actions={actions} />
+      <CampMap you={you} now={now} actions={actions} focus={focus} />
 
       <OathBoard you={you} actions={actions} />
       <Market you={you} actions={actions} />
@@ -760,7 +771,7 @@ function Market({ you, actions }: { you: YouState; actions: GameActions }) {
   const giveN = used * BARTER_GIVE;
   const takeEach = you.lineage ? barterTake(you.lineage, 1) : BARTER_GET;
   const getN = used * takeEach;
-  const room = you.storageCap - you[take];
+  const room = (take === "gold" ? you.goldCap : you.storageCap) - you[take];
   const blocked = give === take || maxLots < 1 || giveN > have || getN > room;
   return (
     <section className="rounded-xl border border-line bg-surface p-4">

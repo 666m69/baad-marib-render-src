@@ -1,5 +1,7 @@
 import {
   BUILDINGS,
+  capState,
+  goldCap,
   applyStudies,
   armyCap,
   peopleCap,
@@ -37,6 +39,7 @@ export function levelMap(you: YouState): Record<BuildingKind, number> {
     farm: 0,
     workshop: 0,
     barracks: 0,
+    storehouse: 0,
   };
   for (const building of you.buildings) levels[building.kind] = building.level;
   return levels;
@@ -50,6 +53,7 @@ export function developScore(you: YouState) {
     levels.farm +
     levels.workshop +
     levels.barracks +
+    levels.storehouse +
     you.studies.filter((study) => study.done).length * 2 +
     you.renown +
     (you.chain?.live ?? 0) +
@@ -102,9 +106,12 @@ export function upgradeYield(you: YouState, kind: BuildingKind): YieldLine[] {
   if (kind === "tent") {
     push(rateLine("الذهب", before.gold, after.gold));
     lines.push({ label: "حد السكان", now: fmt(peopleCap(current)), next: fmt(peopleCap(current + 1)) });
-    lines.push({ label: "سعة الخيمة", now: fmt(storageCap(current)), next: fmt(storageCap(current + 1)) });
+    lines.push({ label: "بيت المال", now: fmt(goldCap(current)), next: fmt(goldCap(current + 1)) });
     lines.push({ label: "دفاع الخيمة", now: fmt(wallDefense(current)), next: fmt(wallDefense(current + 1)) });
     lines.push({ label: "حد الجيش", now: fmt(armyCap(current)), next: fmt(armyCap(current + 1)) });
+  }
+  if (kind === "storehouse") {
+    lines.push({ label: "سعة المخزن", now: fmt(storageCap(current)), next: fmt(storageCap(current + 1)) });
   }
   if (kind === "barracks") {
     const closed = current < 1;
@@ -118,11 +125,20 @@ export function upgradeYield(you: YouState, kind: BuildingKind): YieldLine[] {
   return lines;
 }
 
+/** True when any of water, food, wood or stone is at 80% of the storehouse cap or more. */
+export function storeNearFull(you: Pick<YouState, "water" | "food" | "wood" | "stone" | "storageCap">) {
+  return (["water", "food", "wood", "stone"] as const).some((good) => capState(you[good], you.storageCap) !== "ok");
+}
+
 export function nextStep(you: YouState): DevelopStep {
   const levels = levelMap(you);
+  if (storeNearFull(you) && levels.storehouse < BUILDINGS.storehouse.max) {
+    return { title: "ارفع المخزن", detail: "المخزن قارب الامتلاء. ما زاد على سعته يضيع، حتى الغنيمة.", kind: "storehouse" };
+  }
   if (levels.well < 1) return { title: "احفر البئر", detail: "من دون ماء تجف المضارب قبل أي غارة.", kind: "well" };
   if (levels.farm < 1) return { title: "ازرع المزرعة", detail: "السكان يتوقفون إن هبط الطعام تحت أربعين.", kind: "farm" };
   if (levels.well < 2) return { title: "طوّر البئر", detail: "ماء أكثر يفتح باقي البناء.", kind: "well" };
+  if (levels.storehouse < 1) return { title: "ابْنِ المخزن", detail: "الماء والطعام والخشب والحجر لا تُخزن فوق سعة المخزن.", kind: "storehouse" };
   if (levels.barracks < 1) return { title: "ابْنِ الثكنة", detail: "المشاة والفرسان لا يُدرَّبون إلا فيها.", kind: "barracks" };
   if (levels.workshop < 1) return { title: "ابْنِ الورشة", detail: "الخشب والحجر يغذّيان التوسيع والنقل.", kind: "workshop" };
   if (levels.farm < 2) return { title: "طوّر المزرعة", detail: "جيش أكبر يحتاج طعاماً أكثر.", kind: "farm" };
@@ -132,7 +148,7 @@ export function nextStep(you: YouState): DevelopStep {
   }
   if (levels.barracks < 2) return { title: "طوّر الثكنة", detail: "التدريب يصير أسرع.", kind: "barracks" };
 
-  const order: BuildingKind[] = ["well", "farm", "workshop", "tent", "barracks"];
+  const order: BuildingKind[] = ["well", "farm", "workshop", "storehouse", "tent", "barracks"];
   const pick = order.filter((kind) => levels[kind] < BUILDINGS[kind].max).sort((a, b) => levels[a] - levels[b])[0];
   if (pick) {
     return { title: `طوّر ${BUILDINGS[pick].label}`, detail: BUILDINGS[pick].blurb, kind: pick };
