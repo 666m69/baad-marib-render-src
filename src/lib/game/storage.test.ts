@@ -74,6 +74,15 @@ test("spill note names what was lost to the storehouse", () => {
   assert.match(note, /5 ماء/);
 });
 
+test("gold lost to the cap is blamed on بيت المال, not the storehouse", () => {
+  const gold = spillNote({ water: 0, food: 0, gold: 30, wood: 0, stone: 0 });
+  assert.match(gold, /30 ذهب لضيق بيت المال/);
+  assert.doesNotMatch(gold, /المخزن/);
+  const both = spillNote({ water: 0, food: 4, gold: 30, wood: 0, stone: 0 });
+  assert.match(both, /4 طعام لضيق المخزن/);
+  assert.match(both, /30 ذهب لضيق بيت المال/);
+});
+
 test("bar warns from 80% and is full at the cap", () => {
   assert.equal(capState(2399, 3000), "ok");
   assert.equal(capState(2400, 3000), "warn");

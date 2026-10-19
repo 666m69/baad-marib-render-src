@@ -16,8 +16,12 @@ const COMPANIONS = [
   "الخنساء",
   "النابغة الجعدي",
   "العباس بن مرداس",
-  "حسان",
 ];
+
+/** Whole-word match for Arabic: no letter right before (after an optional و/ف/ب/ل/ك proclitic) or after. */
+function word(term: string) {
+  return new RegExp(`(?<!\\p{L})(?:[وفبلك]{0,2})${term}(?!\\p{L})`, "u");
+}
 
 function walk(dir: string, out: string[] = []) {
   for (const name of readdirSync(dir)) {
@@ -34,8 +38,16 @@ const gameFiles = [...walk(join(ROOT, "src")), ...walk(join(ROOT, "migrations"))
 test("no Companion appears anywhere in game code or content", () => {
   for (const file of gameFiles) {
     const text = readFileSync(file, "utf8");
-    for (const name of COMPANIONS) assert.ok(!text.includes(name), `${name} in ${file}`);
+    for (const name of COMPANIONS) assert.ok(!word(name).test(text), `${name} in ${file}`);
   }
+});
+
+test("the whole-word matcher has no false alarms on look-alike words", () => {
+  assert.ok(!word("الحرم").test("الحرمان من الماء"));
+  assert.ok(word("الحرم").test("سدنة الحرم، وحمى"));
+  assert.ok(word("الحرم").test("وبالحرم"));
+  assert.ok(!word("حسان بن ثابت").test("إحسان بن ثابتة"));
+  assert.ok(word("كعب بن مالك").test("شاعرها كعب بن مالك."));
 });
 
 test("every lineage poet is a documented jahili poet or a clearly fictional character", () => {
@@ -56,7 +68,7 @@ test("sheikh name pool has no Companion's full name", () => {
 });
 
 test("Mecca is never a capture objective or win condition", () => {
-  const forbidden = [/مكة/, /مكّة/, /الكعبة/, /الحرم/, /البيت الحرام/, /\bmecca\b/i, /\bmakkah\b/i, /\bkaaba\b/i];
+  const forbidden = [word("مكة"), word("مكّة"), word("الكعبة"), word("الحرم"), word("البيت الحرام"), /\bmecca\b/i, /\bmakkah\b/i, /\bkaaba\b/i];
   for (const file of gameFiles) {
     const text = readFileSync(file, "utf8");
     for (const word of forbidden) assert.ok(!word.test(text), `${word} in ${file}`);

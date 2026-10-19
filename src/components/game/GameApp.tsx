@@ -55,6 +55,9 @@ function Authed({ userId }: { userId: string }) {
   });
   const [tab, setTab] = useState<Tab>("map");
   const [campFocus, setCampFocus] = useState<{ kind: BuildingKind; at: number } | null>(null);
+  useEffect(() => {
+    if (tab !== "camp") setCampFocus(null);
+  }, [tab]);
   const raise = (kind: BuildingKind) => {
     setCampFocus({ kind, at: Date.now() });
     setTab("camp");

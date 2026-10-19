@@ -596,11 +596,13 @@ export type Stock = { water: number; food: number; gold: number; wood: number; s
 export function spillNote(lost: Stock) {
   const bits: string[] = [];
   if (lost.food) bits.push(`${lost.food} طعام`);
-  if (lost.gold) bits.push(`${lost.gold} ذهب`);
   if (lost.wood) bits.push(`${lost.wood} خشب`);
   if (lost.stone) bits.push(`${lost.stone} حجر`);
   if (lost.water) bits.push(`${lost.water} ماء`);
-  return bits.length ? `ضاع من الغنيمة ${bits.join("، ")} لضيق المخزن.` : "";
+  const parts: string[] = [];
+  if (bits.length) parts.push(`${bits.join("، ")} لضيق المخزن`);
+  if (lost.gold) parts.push(`${lost.gold} ذهب لضيق بيت المال`);
+  return parts.length ? `ضاع من الغنيمة ${parts.join("، و")}.` : "";
 }
 
 export function takeLoot(stock: Stock, carry: number): Stock {
@@ -704,7 +706,7 @@ export const LINEAGE: Record<
   {
     name: string;
     poet: string;
-    /** "jahili" = documented pre-Islamic poet (sources in gdd.md); "fictional" = invented character. */
+    /** "jahili" = documented pre-Islamic poet (lineage, era and sources in docs/poets.md); "fictional" = invented character. */
     poetKind: "jahili" | "fictional";
     poetNote: string;
     blurb: string;

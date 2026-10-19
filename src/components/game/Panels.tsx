@@ -1,6 +1,5 @@
 import { useState } from "react";
 import {
-  BUILDINGS,
   BARTER_GET,
   BARTER_GIVE,
   DEFERRED,
@@ -25,13 +24,13 @@ import {
   SCOUT_GOLD,
   TRAIN,
   armyPower,
+  attackDropsShield,
   defenseOf,
   barterTake,
   studyOpen,
   TRAITS,
   traitLine,
   trainQuote,
-  upgradeCost,
   type BuildingKind,
   type Good,
   type Lineage,
@@ -210,7 +209,7 @@ export function CampPanel({
           <div>
             <h3 className="font-medium">درع المبتدئ</h3>
             <p className="text-sm text-faint">
-              {you.attacked ? "سقط لأنك شهرت السلاح" : peaceLeft > 0 ? `باقٍ ${fmtRemain(peaceLeft)}` : "ساقط"}
+              {you.attacked ? "سقط لأنك هاجمت قبيلة" : peaceLeft > 0 ? `باقٍ ${fmtRemain(peaceLeft)}` : "ساقط"}
             </p>
           </div>
           {!you.attacked && (
@@ -469,7 +468,7 @@ export function TileSheet({
         locked={false}
         you={you}
         dist={distance(you.x, you.y, bandit.x, bandit.y)}
-        warn={!you.attacked}
+        warn={!you.attacked && attackDropsShield("bandit")}
         busy={actions.busy}
         scouting={world.marches.some((march) => march.purpose === "scout" && march.role === "out")}
         onScout={() => actions.scout("bandit", String(bandit.id))}
@@ -491,7 +490,7 @@ export function TileSheet({
           <p className="mt-2 text-sm text-fg">
             {fmt(outlaw.cavalry)} فرسان · البيعة {fmt(outlaw.gold)} ذهب و{fmt(outlaw.food)} طعام
           </p>
-          <p className="mt-1 text-xs text-oasis">البيعة لا تُسقط الدرع، وتزيد صيت الشيخ. بعدها، من المغرب إلى الفجر، غارتك بلا اسم. القتال يُسقط الدرع.</p>
+          <p className="mt-1 text-xs text-oasis">البيعة لا تُسقط الدرع، وتزيد صيت الشيخ. بعدها، من المغرب إلى الفجر، غارتك بلا اسم. قتال الصعاليك والعصابات لا يُسقط الدرع، ومهاجمة مضارب قبيلة تُسقطه.</p>
           <Btn className="mt-3 w-full" disabled={actions.busy || goldShort || foodShort} onClick={() => actions.hire(outlaw.id)}>
             بايع الفرسان
           </Btn>
@@ -504,7 +503,7 @@ export function TileSheet({
           locked={false}
           you={you}
           dist={distance(you.x, you.y, outlaw.x, outlaw.y)}
-          warn={!you.attacked}
+          warn={!you.attacked && attackDropsShield("saalik")}
           busy={actions.busy}
           scouting={false}
           allowScout={false}
@@ -696,7 +695,7 @@ function AttackBox({
       {you.pacts > 0 && (
         <p className="mt-2 text-xs text-muted">في الليل تخرج هذه الغارة بلا اسم، وأصل السهم لا يراه سواك. الطليعة تبقى باسمك.</p>
       )}
-      {warn && <p className="mt-2 text-xs text-danger">الهجوم يُسقط درع المبتدئ. الطليعة لا تُسقطه.</p>}
+      {warn && <p className="mt-2 text-xs text-danger">مهاجمة مضارب قبيلة تُسقط درع المبتدئ. الطليعة لا تُسقطه.</p>}
       {locked && lockedNote && <p className="mt-2 text-xs text-muted">{lockedNote}</p>}
       <Btn className="mt-3 w-full" variant="danger" disabled={busy || locked || tooMany} onClick={() => onSend(infantry, cavalry)}>
         أرسل الهجوم

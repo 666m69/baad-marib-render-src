@@ -64,7 +64,6 @@ import {
   attackDropsShield,
   capsOf,
   emptyLevels,
-  fitIncome,
   spillNote,
   studyOpen,
   takeLoot,
@@ -418,22 +417,42 @@ async function refund(sql: Sql, userId: string, cost: Cost) {
 
 /** Add income under the caps. Whatever does not fit is lost and returned for the report. */
 async function creditCapped(sql: Sql, userId: string, add: Stock) {
-  const rows = await sql<Row>`select water, food, gold, wood, stone from tribes where user_id = ${userId}`;
-  const row = rows[0];
   const none: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
-  if (!row) return { gain: none, lost: none };
   const caps = capsOf(await columnMap(sql, userId));
-  const stock: Stock = { water: num(row.water), food: num(row.food), gold: num(row.gold), wood: num(row.wood), stone: num(row.stone) };
-  const { gain, lost } = fitIncome(stock, add, caps);
-  await sql`
-    update tribes set
-      water = water + ${gain.water},
-      food = food + ${gain.food},
-      gold = gold + ${gain.gold},
-      wood = wood + ${gain.wood},
-      stone = stone + ${gain.stone}
-    where user_id = ${userId}
+  const put = (good: keyof Stock) => Math.max(0, Math.floor(add[good]));
+  // One atomic statement: the cap is applied in SQL against the row as it is now,
+  // and a stock already above its cap is never pushed down.
+  const rows = await sql<Row>`
+    with old as (
+      select user_id, water, food, gold, wood, stone from tribes where user_id = ${userId} for update
+    )
+    update tribes t set
+      water = greatest(t.water, least(${caps.water}, t.water + ${put("water")})),
+      food = greatest(t.food, least(${caps.food}, t.food + ${put("food")})),
+      gold = greatest(t.gold, least(${caps.gold}, t.gold + ${put("gold")})),
+      wood = greatest(t.wood, least(${caps.wood}, t.wood + ${put("wood")})),
+      stone = greatest(t.stone, least(${caps.stone}, t.stone + ${put("stone")}))
+    from old
+    where t.user_id = old.user_id
+    returning old.water as w0, old.food as f0, old.gold as g0, old.wood as d0, old.stone as s0,
+              t.water as w1, t.food as f1, t.gold as g1, t.wood as d1, t.stone as s1
   `;
+  const row = rows[0];
+  if (!row) return { gain: none, lost: none };
+  const gain: Stock = {
+    water: num(row.w1) - num(row.w0),
+    food: num(row.f1) - num(row.f0),
+    gold: num(row.g1) - num(row.g0),
+    wood: num(row.d1) - num(row.d0),
+    stone: num(row.s1) - num(row.s0),
+  };
+  const lost: Stock = {
+    water: put("water") - gain.water,
+    food: put("food") - gain.food,
+    gold: put("gold") - gain.gold,
+    wood: put("wood") - gain.wood,
+    stone: put("stone") - gain.stone,
+  };
   return { gain, lost };
 }
 
@@ -1895,7 +1914,7 @@ async function found(
     "found",
     "نُصبت المضارب",
     said(
-      `خرجت ${name} من أثر السد، وحطّت في الوادي. شيخها ${sheikh}${line ? `، وشاعرها ${poetLine(line)}` : ""}. ${line ? line.gift : ""} ${pastureLine} درع المبتدئ قائم ${START.peaceMin} دقيقة، ويسقط إن شهرت السلاح.`,
+      `خرجت ${name} من أثر السد، وحطّت في الوادي. شيخها ${sheikh}${line ? `، وشاعرها ${poetLine(line)}` : ""}. ${line ? line.gift : ""} ${pastureLine} درع المبتدئ قائم ${START.peaceMin} دقيقة. قتال العصابات والصعاليك لا يُسقطه، ومهاجمة مضارب قبيلة أخرى تُسقطه.`,
     ),
     true,
   );
@@ -2144,7 +2163,7 @@ export function extendPeace(userId: string) {
   return withWorld(userId, async (sql) => {
     const tribe = await requireTribe(sql, userId);
     if (!tribe) return "انصب مضاربك أولًا.";
-    if (flag(tribe.attacked)) return "من شهر السيف لا يرجع إلى درع المبتدئ.";
+    if (flag(tribe.attacked)) return "من هاجم قبيلة لا يرجع إلى درع المبتدئ.";
     const cost = peaceExtendCost(num(tribe.peace_extends));
     const ahead = MAX_PEACE_AHEAD_MS / 1000 - PEACE_EXTEND_MIN * 60;
     const updated = await sql<Row>`
