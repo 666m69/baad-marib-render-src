@@ -900,3 +900,34 @@ export const DEFERRED = [
   "التحالفات",
   "الرسوم المفصّلة",
 ];
+
+/** Thousandths of a unit carried between ticks, so slow rates and frequent polls still add up. */
+export const BANK_SCALE = 1000;
+
+/**
+ * Grow one good for `ms` milliseconds at `ratePerMin`, keeping the fractional
+ * remainder in `bank` (thousandths). At the cap the bank is cleared.
+ */
+export function accrueGood(stock: number, bank: number, ratePerMin: number, ms: number, cap: number) {
+  const safeBank = Number.isFinite(bank) ? Math.max(0, Math.floor(bank)) : 0;
+  if (stock >= cap) return { stock, bank: 0 };
+  if (!(ratePerMin > 0) || !(ms > 0)) return { stock, bank: safeBank };
+  const total = safeBank + Math.floor((ratePerMin * ms) / 60);
+  const gain = Math.floor(total / BANK_SCALE);
+  const next = stock + gain;
+  if (next >= cap) return { stock: cap, bank: 0 };
+  return { stock: next, bank: total - gain * BANK_SCALE };
+}
+
+/** People growth: one person per `growMs` while food is above the gate, remainder kept in `bank` (ms). */
+export function growPeople(people: number, bank: number, food: number, ms: number, cap: number, growMs: number, foodGate: number) {
+  if (!(food > foodGate) || people >= cap || !(ms > 0)) return { people, bank };
+  const total = bank + ms;
+  return { people: Math.min(cap, people + Math.floor(total / growMs)), bank: total % growMs };
+}
+
+/** A whole number from untrusted input; anything not finite becomes -1 so range checks reject it. */
+export function whole(value: unknown): number {
+  const n = typeof value === "number" ? value : Number.NaN;
+  return Number.isFinite(n) ? Math.floor(n) : -1;
+}

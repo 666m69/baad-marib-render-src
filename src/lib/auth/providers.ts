@@ -29,3 +29,10 @@ export const GROK_PROVIDERS: readonly GrokProvider[] = [
   { providerId: "grok-google", idp: "google", label: "Google" },
   { providerId: "grok-x", idp: "twitter", label: "X" },
 ];
+
+/**
+ * Sign-in buttons shown to players. Empty: «بعد مأرب» signs in with email
+ * only, because Google and X go through the Grok auth broker and fail outside
+ * the Grok platform. To bring them back, set up a broker and list entries here.
+ */
+export const SIGN_IN_PROVIDERS: readonly GrokProvider[] = [];

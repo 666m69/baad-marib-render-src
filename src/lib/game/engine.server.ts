@@ -1,4 +1,5 @@
-import { getSql, type Sql } from "@/lib/db";
+import { withTransaction, type Sql } from "@/lib/db";
+import { inWorld } from "./world-lock";
 import {
   AMBUSH_RANGE,
   BANDIT_MAX,
@@ -61,7 +62,9 @@ import {
   SCOUT_HOLD_MIN,
   storageCap,
   poetLine,
+  accrueGood,
   attackDropsShield,
+  growPeople,
   capsOf,
   emptyLevels,
   fitIncome,
@@ -70,6 +73,7 @@ import {
   takeLoot,
   traitFactor,
   trainQuote,
+  whole,
   upgradeCost,
   workSeconds,
   barterTake,
@@ -104,15 +108,9 @@ import type { BuildingView, ChainView, FieldView, GameResult, IntelView, OathVie
 
 type Row = Record<string, unknown>;
 
-let chain: Promise<void> = Promise.resolve();
-
-function locked<T>(fn: () => Promise<T>): Promise<T> {
-  const run = chain.then(fn, fn);
-  chain = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
+/** One database transaction holding the valley row lock (safe across server instances). */
+function locked<T>(fn: (sql: Sql) => Promise<T>): Promise<T> {
+  return inWorld(withTransaction, fn);
 }
 
 function num(v: unknown): number {
@@ -577,7 +575,13 @@ async function finishExpand(sql: Sql) {
 }
 
 async function accrue(sql: Sql) {
-  const tribes = await sql<Row>`select user_id, sanctuary, sheikh_trait, lineage, renown from tribes`;
+  const tribes = await sql<Row>`
+    select user_id, sanctuary, sheikh_trait, lineage, renown,
+           water, food, gold, wood, stone, people, people_bank,
+           water_bank, food_bank, gold_bank, wood_bank, stone_bank,
+           greatest(0, least(floor(extract(epoch from (now() - last_tick)) * 1000), ${MAX_ACCRUE_SEC * 1000}))::bigint as ms
+    from tribes
+  `;
   const buildings = await sql<Row>`select user_id, kind, level from buildings`;
   const fieldRows = await sql<Row>`select user_id, good, level from fields`;
   const done = await sql<Row>`select user_id, kind from studies where done = true`;
@@ -626,34 +630,26 @@ async function accrue(sql: Sql) {
     const gcap = capsOf(levels).gold;
     const pcap = peopleCap(levels.tent || 1);
     const grow = peopleGrowMs(levels.tent || 1);
+    const ms = num(tribe.ms);
+    if (ms <= 0) continue;
+    const grown = {
+      water: accrueGood(num(tribe.water), num(tribe.water_bank), bonusRates.water, ms, cap),
+      food: accrueGood(num(tribe.food), num(tribe.food_bank), bonusRates.food, ms, cap),
+      gold: accrueGood(num(tribe.gold), num(tribe.gold_bank), bonusRates.gold, ms, gcap),
+      wood: accrueGood(num(tribe.wood), num(tribe.wood_bank), bonusRates.wood, ms, cap),
+      stone: accrueGood(num(tribe.stone), num(tribe.stone_bank), bonusRates.stone, ms, cap),
+    };
+    const folk = growPeople(num(tribe.people), num(tribe.people_bank), num(tribe.food), ms, pcap, grow, PEOPLE_FOOD_GATE);
     await sql`
-      with d as (
-        select greatest(
-          0,
-          least(extract(epoch from (now() - last_tick))::int, ${MAX_ACCRUE_SEC})
-        ) as sec
-        from tribes
-        where user_id = ${id}
-      )
-      update tribes t set
-        water = case when t.water >= ${cap} then t.water else least(${cap}, t.water + (${bonusRates.water} * d.sec) / 60) end,
-        food = case when t.food >= ${cap} then t.food else least(${cap}, t.food + (${bonusRates.food} * d.sec) / 60) end,
-        gold = case when t.gold >= ${gcap} then t.gold else least(${gcap}, t.gold + (${bonusRates.gold} * d.sec) / 60) end,
-        wood = case when t.wood >= ${cap} then t.wood else least(${cap}, t.wood + (${bonusRates.wood} * d.sec) / 60) end,
-        stone = case when t.stone >= ${cap} then t.stone else least(${cap}, t.stone + (${bonusRates.stone} * d.sec) / 60) end,
-        people = case
-          when t.food > ${PEOPLE_FOOD_GATE} and t.people < ${pcap}
-            then least(${pcap}, t.people + ((t.people_bank + d.sec * 1000) / ${grow})::int)
-          else t.people
-        end,
-        people_bank = case
-          when t.food > ${PEOPLE_FOOD_GATE} and t.people < ${pcap}
-            then (t.people_bank + d.sec * 1000) % ${grow}
-          else t.people_bank
-        end,
+      update tribes set
+        water = ${grown.water.stock}, water_bank = ${grown.water.bank},
+        food = ${grown.food.stock}, food_bank = ${grown.food.bank},
+        gold = ${grown.gold.stock}, gold_bank = ${grown.gold.bank},
+        wood = ${grown.wood.stock}, wood_bank = ${grown.wood.bank},
+        stone = ${grown.stone.stock}, stone_bank = ${grown.stone.bank},
+        people = ${folk.people}, people_bank = ${folk.bank},
         last_tick = now()
-      from d
-      where t.user_id = ${id} and d.sec >= 1
+      where user_id = ${id}
     `;
   }
 }
@@ -1926,8 +1922,7 @@ function cellBlockedFor(
 }
 
 async function withWorld(userId: string, fn: (sql: Sql) => Promise<string | null>): Promise<GameResult> {
-  return locked(async () => {
-    const sql = await getSql();
+  return locked(async (sql) => {
     await tick(sql);
     const error = await fn(sql);
     if (error) return { ok: false, error };
@@ -1936,8 +1931,7 @@ async function withWorld(userId: string, fn: (sql: Sql) => Promise<string | null
 }
 
 export function loadWorld(userId: string) {
-  return locked(async () => {
-    const sql = await getSql();
+  return locked(async (sql) => {
     await tick(sql);
     return snapshot(sql, userId);
   });
@@ -2074,8 +2068,8 @@ export function releasePasture(userId: string, x: number, y: number) {
 export function spoilPasture(userId: string, x: number, y: number, infantryRaw: number, cavalryRaw: number) {
   return withWorld(userId, async (sql) => {
     if (!inBounds(x, y)) return "هذا الموضع خارج الوادي.";
-    const infantry = Math.floor(infantryRaw);
-    const cavalry = Math.floor(cavalryRaw);
+    const infantry = whole(infantryRaw);
+    const cavalry = whole(cavalryRaw);
     if (!Number.isFinite(infantry) || !Number.isFinite(cavalry) || infantry < 0 || cavalry < 0 || infantry + cavalry < 1 || infantry > 400 || cavalry > 400) {
       return "عدد الجند غير صالح.";
     }
@@ -2199,7 +2193,7 @@ export function train(userId: string, kind: string, qtyRaw: number) {
   return withWorld(userId, async (sql) => {
     if (kind !== "infantry" && kind !== "cavalry") return "صنف غير معروف.";
     const troop = kind as TroopKind;
-    const qty = Math.floor(qtyRaw);
+    const qty = whole(qtyRaw);
     if (qty < 1 || qty > 80) return "درّب بين واحد وثمانين.";
     const tribe = await requireTribe(sql, userId);
     if (!tribe) return "انصب مضاربك أولًا.";
@@ -2342,8 +2336,8 @@ export function attack(
     if (input.targetKind !== "player" && input.targetKind !== "bandit" && input.targetKind !== "saalik") {
       return "هدف غير معروف.";
     }
-    const infantry = Math.floor(input.infantry);
-    const cavalry = Math.floor(input.cavalry);
+    const infantry = whole(input.infantry);
+    const cavalry = whole(input.cavalry);
     if (infantry < 0 || cavalry < 0 || infantry + cavalry < 1 || infantry > 400 || cavalry > 400) {
       return "عدد الجند غير صالح.";
     }
@@ -2530,10 +2524,7 @@ export function claimOath(userId: string, kind: string) {
       returning kind
     `;
     if (!inserted.length) return "قُبض هذا العهد.";
-    await sql`
-      update tribes set food = food + ${foodAdd}, gold = gold + ${goldAdd}
-      where user_id = ${userId}
-    `;
+    await creditCapped(sql, userId, { water: 0, food: foodAdd, gold: goldAdd, wood: 0, stone: 0 });
     return null;
   });
 }
@@ -2541,7 +2532,7 @@ export function claimOath(userId: string, kind: string) {
 export function barter(userId: string, input: { give: string; take: string; lots: number }) {
   return withWorld(userId, async (sql) => {
     if (!isGood(input.give) || !isGood(input.take) || input.give === input.take) return "اختر موردين مختلفين.";
-    const lots = Math.floor(input.lots);
+    const lots = whole(input.lots);
     if (lots < 1 || lots > BARTER_MAX_LOTS) return "البدل بين دفعة وثمانين.";
     const tribe = await requireTribe(sql, userId);
     if (!tribe) return "انصب مضاربك أولًا.";
@@ -2555,16 +2546,8 @@ export function barter(userId: string, input: { give: string; take: string; lots
     const paid = await spend(sql, userId, goodCost(input.give, giveQty));
     if (!paid) return "ما معك لا يكفي للبدل.";
     const gain = goodCost(input.take, getQty);
-    await sql`
-      update tribes set
-        water = water + ${gain.water},
-        food = food + ${gain.food},
-        gold = gold + ${gain.gold},
-        wood = wood + ${gain.wood},
-        stone = stone + ${gain.stone},
-        trades = trades + 1
-      where user_id = ${userId}
-    `;
+    await creditCapped(sql, userId, gain);
+    await sql`update tribes set trades = trades + 1 where user_id = ${userId}`;
     return null;
   });
 }
@@ -2621,14 +2604,7 @@ export function claimGuide(userId: string, kind: string) {
       returning kind
     `;
     if (!inserted.length) return "قُبضت هذه المكافأة.";
-    await sql`
-      update tribes set
-        gold = gold + ${reward.gold},
-        food = food + ${reward.food},
-        wood = wood + ${reward.wood},
-        stone = stone + ${reward.stone}
-      where user_id = ${userId}
-    `;
+    await creditCapped(sql, userId, { water: 0, food: reward.food, gold: reward.gold, wood: reward.wood, stone: reward.stone });
     return null;
   });
 }

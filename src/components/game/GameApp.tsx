@@ -329,7 +329,7 @@ function Top({
   onCoach: (() => void) | null;
   onLetter: () => void;
   onRaise?: (kind: BuildingKind) => void;
-  desk?: { steward: boolean; claimOpen: boolean; pending: number };
+  desk?: { steward: boolean; pending: number };
 }) {
   const peace = you?.peaceUntil && now ? you.peaceUntil - now : 0;
   return (
@@ -363,7 +363,7 @@ function Top({
               المرشد
             </button>
           )}
-          {(desk?.steward || desk?.claimOpen) && (
+          {desk?.steward && (
             <Link to="/diwan" className="relative min-h-11 px-2 text-xs text-accent">
               الديوان
               {desk.pending > 0 ? ` ${desk.pending}` : ""}

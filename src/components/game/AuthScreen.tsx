@@ -1,14 +1,16 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { GROK_PROVIDERS, authClient, signIn } from "@/lib/auth/client";
+import { SIGN_IN_PROVIDERS, authClient, signIn } from "@/lib/auth/client";
 import { Btn, Field, inputClass } from "./ui";
 import { ValleyMark } from "./Mark";
 
 function arabicAuthError(message: string) {
   const m = message.toLowerCase();
-  if (m.includes("already") || m.includes("exist")) return "هذا البريد مسجّل. ادخل بدل التسجيل.";
+  if (m.includes("already") || m.includes("exist"))
+    return "هذا البريد مسجّل. ادخل بدل التسجيل.";
   if (m.includes("password")) return "كلمة السر قصيرة. ثمانية أحرف على الأقل.";
-  if (m.includes("email") || m.includes("invalid")) return "تحقق من البريد وكلمة السر.";
+  if (m.includes("email") || m.includes("invalid"))
+    return "تحقق من البريد وكلمة السر.";
   if (m.includes("origin")) return "تعذّر الدخول من هذا العنوان.";
   return "تعذّر الدخول. حاول مرة أخرى.";
 }
@@ -70,10 +72,14 @@ export function AuthScreen() {
             </div>
           </div>
           <p className="mt-3 text-pretty text-muted">
-            القبائل بعد انهيار السد. اختر شيخاً وراية، وابنِ مضاربك، وبايع الصعاليك أو واجههم على الخريطة.
+            القبائل بعد انهيار السد. اختر شيخاً وراية، وابنِ مضاربك، وبايع
+            الصعاليك أو واجههم على الخريطة.
           </p>
         </header>
-        <form onSubmit={submit} className="grid gap-4 rounded-xl bg-surface p-5">
+        <form
+          onSubmit={submit}
+          className="grid gap-4 rounded-xl bg-surface p-5"
+        >
           <div className="grid grid-cols-2 gap-2 rounded-lg bg-bg p-1">
             <button
               type="button"
@@ -92,7 +98,12 @@ export function AuthScreen() {
           </div>
           {mode === "up" && (
             <Field label="الاسم">
-              <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
+              <input
+                className={inputClass}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoComplete="name"
+              />
             </Field>
           )}
           <Field label="البريد">
@@ -120,23 +131,31 @@ export function AuthScreen() {
           </Field>
           {error && <p className="text-sm text-danger">{error}</p>}
           <Btn type="submit" disabled={pending}>
-            {pending ? "لحظة…" : mode === "up" ? "أنشئ حساباً وادخل" : "ادخل الوادي"}
+            {pending
+              ? "لحظة…"
+              : mode === "up"
+                ? "أنشئ حساباً وادخل"
+                : "ادخل الوادي"}
           </Btn>
         </form>
-        <div className="grid gap-2">
-          {GROK_PROVIDERS.map((provider) => (
-            <Btn
-              key={provider.providerId}
-              type="button"
-              variant="ghost"
-              onClick={() => {
-                void signIn(provider.providerId, { callbackURL: "/" }).catch(() => setError("تعذّر الدخول عبر المزود."));
-              }}
-            >
-              المتابعة عبر {provider.label}
-            </Btn>
-          ))}
-        </div>
+        {SIGN_IN_PROVIDERS.length > 0 && (
+          <div className="grid gap-2">
+            {SIGN_IN_PROVIDERS.map((provider) => (
+              <Btn
+                key={provider.providerId}
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  void signIn(provider.providerId, { callbackURL: "/" }).catch(
+                    () => setError("تعذّر الدخول عبر المزود."),
+                  );
+                }}
+              >
+                المتابعة عبر {provider.label}
+              </Btn>
+            ))}
+          </div>
+        )}
       </div>
     </main>
   );

@@ -29,7 +29,12 @@ function walk(dir: string, out: string[] = []) {
   return out;
 }
 
-const gameFiles = [...walk(join(ROOT, "src")), ...walk(join(ROOT, "migrations")), ...walk(join(ROOT, "public"))];
+/** The one migration that rewrites old stored reports may name the two Companions, only inside replace(). */
+const SCRUB = join(ROOT, "migrations", "0016_scrub_companions.sql");
+
+const gameFiles = [...walk(join(ROOT, "src")), ...walk(join(ROOT, "migrations")), ...walk(join(ROOT, "public"))].filter(
+  (file) => file !== SCRUB,
+);
 
 test("no Companion appears anywhere in game code or content", () => {
   for (const file of gameFiles) {
@@ -61,4 +66,18 @@ test("Mecca is never a capture objective or win condition", () => {
     const text = readFileSync(file, "utf8");
     for (const word of forbidden) assert.ok(!word.test(text), `${word} in ${file}`);
   }
+});
+
+test("the scrub migration names the Companions only to replace them", () => {
+  const text = readFileSync(SCRUB, "utf8");
+  const code = text
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("--"))
+    .join("\n");
+  for (const name of ["حسان بن ثابت", "كعب بن مالك"]) {
+    const uses = code.split(name).length - 1;
+    const replaced = (code.match(new RegExp(`replace\\([^;]*'${name}'`, "g")) ?? []).length;
+    assert.ok(uses > 0 && replaced > 0, name);
+  }
+  for (const name of COMPANIONS.slice(2, -1)) assert.ok(!text.includes(name), name);
 });

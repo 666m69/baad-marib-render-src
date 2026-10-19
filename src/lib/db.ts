@@ -47,6 +47,7 @@ export interface Sql {
  */
 const globalRef = globalThis as typeof globalThis & {
   __pgSqlPromise__?: Promise<Sql>;
+  __pgPool__?: Promise<import("pg").Pool>;
   __pgliteInstance__?: Promise<import("@electric-sql/pglite").PGlite>;
   __pgliteMigrateChain__?: Promise<void>;
 };
@@ -115,15 +116,25 @@ function toSql(run: Run): Sql {
   return sql;
 }
 
-function createNeonSql(): Promise<Sql> {
-  globalRef.__pgSqlPromise__ ??= (async () => {
+function neonPool(): Promise<import("pg").Pool> {
+  globalRef.__pgPool__ ??= (async () => {
     // Regular Postgres driver: node-postgres (`pg`) — works directly with Neon's
     // pooled endpoint. One pool per process; warm serverless instances reuse it.
     const { Pool, types } = await import("pg");
     types.setTypeParser(OID_INT8, Number);
     types.setTypeParser(OID_DATE, identity);
     types.setTypeParser(OID_INTERVAL, identity);
-    const pool = new Pool({ connectionString: databaseUrl });
+    return new Pool({ connectionString: databaseUrl });
+  })().catch((err) => {
+    globalRef.__pgPool__ = undefined;
+    throw err;
+  });
+  return globalRef.__pgPool__;
+}
+
+function createNeonSql(): Promise<Sql> {
+  globalRef.__pgSqlPromise__ ??= (async () => {
+    const pool = await neonPool();
     return toSql(async <T>(text: string, params: unknown[]) => {
       const res = await pool.query(text, params);
       return res.rows as T[];
@@ -189,6 +200,35 @@ async function createPgliteSql(): Promise<Sql> {
     const result = await pg.query<T>(text, params);
     return result.rows;
   });
+}
+
+/**
+ * Run `fn` inside one database transaction on one connection. Commits when
+ * `fn` resolves, rolls back when it throws. Row locks taken inside (e.g.
+ * `select … for update`) hold until the end, across every server instance.
+ */
+export async function withTransaction<T>(fn: (tx: Sql) => Promise<T>): Promise<T> {
+  if (typeof window !== "undefined") throw new Error("@/lib/db is server-only");
+  if (dbSource === "neon") {
+    const pool = await neonPool();
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      const tx = toSql(async <R>(text: string, params: unknown[]) => (await client.query(text, params)).rows as R[]);
+      const out = await fn(tx);
+      await client.query("commit");
+      return out;
+    } catch (err) {
+      await client.query("rollback").catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+  await getSql();
+  const pg = await globalRef.__pgliteInstance__;
+  if (!pg) throw new Error("PGLite instance failed to initialize");
+  return pg.transaction((tx) => fn(toSql(async <R>(text: string, params: unknown[]) => (await tx.query<R>(text, params)).rows)));
 }
 
 let sqlPromise: Promise<Sql> | null = null;
