@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DiwanRouteImport } from './routes/diwan'
+import { Route as HealthRouteImport } from './routes/health'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
@@ -22,6 +23,11 @@ const IndexRoute = IndexRouteImport.update({
 const DiwanRoute = DiwanRouteImport.update({
   id: '/diwan',
   path: '/diwan',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HealthRoute = HealthRouteImport.update({
+  id: '/health',
+  path: '/health',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -38,12 +44,14 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/diwan': typeof DiwanRoute
+  '/health': typeof HealthRoute
   '/login': typeof LoginRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/diwan': typeof DiwanRoute
+  '/health': typeof HealthRoute
   '/login': typeof LoginRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
@@ -51,20 +59,22 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/diwan': typeof DiwanRoute
+  '/health': typeof HealthRoute
   '/login': typeof LoginRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/diwan' | '/login' | '/api/auth/$'
+  fullPaths: '/' | '/diwan' | '/health' | '/login' | '/api/auth/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/diwan' | '/login' | '/api/auth/$'
-  id: '__root__' | '/' | '/diwan' | '/login' | '/api/auth/$'
+  to: '/' | '/diwan' | '/health' | '/login' | '/api/auth/$'
+  id: '__root__' | '/' | '/diwan' | '/health' | '/login' | '/api/auth/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DiwanRoute: typeof DiwanRoute
+  HealthRoute: typeof HealthRoute
   LoginRoute: typeof LoginRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
@@ -83,6 +93,13 @@ declare module '@tanstack/react-router' {
       path: '/diwan'
       fullPath: '/diwan'
       preLoaderRoute: typeof DiwanRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/health': {
+      id: '/health'
+      path: '/health'
+      fullPath: '/health'
+      preLoaderRoute: typeof HealthRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -105,6 +122,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DiwanRoute: DiwanRoute,
+  HealthRoute: HealthRoute,
   LoginRoute: LoginRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
 }

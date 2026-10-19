@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { isProductionEnv, productionEnvProblems } from "../../scripts/env-check.mjs";
 import { pendingMigrations } from "../../scripts/migration-plan.mjs";
 
 /** Which database backend is active. */
@@ -16,6 +17,19 @@ const databaseUrl =
  * the app has a working database locally with nothing configured. Swap in Neon later by just setting `DATABASE_URL`; no code changes.
  */
 export const dbSource: DbSource = databaseUrl ? "neon" : "pglite";
+
+/**
+ * Production never runs on PGlite: without DATABASE_URL the process logs why
+ * and exits 1 (scripts/start.mjs checks first; this catches any other entry).
+ */
+if (typeof window === "undefined" && typeof process !== "undefined" && isProductionEnv(process.env)) {
+  const problems = productionEnvProblems(process.env);
+  if (problems.length) {
+    console.error("[db] refusing to start in production:");
+    for (const problem of problems) console.error(`[db]   - ${problem}`);
+    process.exit(1);
+  }
+}
 
 /**
  * Tests only: `PGLITE_MEMORY=1` opens a throwaway in-memory PGLite and reads

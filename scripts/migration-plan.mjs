@@ -38,3 +38,19 @@ export function pendingMigrations(paths, applied) {
     .sort((a, b) => a.name.localeCompare(b.name))
     .filter(({ name }) => !done.has(name));
 }
+
+/**
+ * The URL the migration runner connects to: Neon's direct (non-pooled)
+ * endpoint when DATABASE_URL_UNPOOLED is set, since DDL and long transactions
+ * do not belong on the pgbouncer pooler; otherwise DATABASE_URL. Only
+ * scripts/migrate.mjs uses this; the app always uses the pooled DATABASE_URL.
+ * @param {Record<string, string | undefined>} env
+ * @returns {{ url: string, source: "DATABASE_URL_UNPOOLED" | "DATABASE_URL" } | null}
+ */
+export function migrationDatabaseUrl(env) {
+  for (const source of /** @type {const} */ (["DATABASE_URL_UNPOOLED", "DATABASE_URL"])) {
+    const url = env[source]?.trim();
+    if (url) return { url, source };
+  }
+  return null;
+}

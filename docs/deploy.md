@@ -9,12 +9,16 @@
 | المتغير | إلزامي | ملاحظة |
 |---|---|---|
 | `DATABASE_URL` | نعم | Neon فرانكفورت، رابط pooler مع `?sslmode=require` |
+| `DATABASE_URL_UNPOOLED` | مستحسن | رابط Neon المباشر (بلا `-pooler`) مع `?sslmode=require`. للمهاجرات فقط (`scripts/migrate.mjs`)، وبدونه تستعمل `DATABASE_URL` |
 | `BETTER_AUTH_SECRET` | نعم | 32 حرفاً عشوائياً على الأقل (`openssl rand -base64 32`) |
 | `BETTER_AUTH_URL` | نعم | الرابط العام https، مثل `https://baad-marib.onrender.com` |
 | `ADMIN_EMAIL` | نعم | بريد صاحب الديوان |
 
-الخادم **يرفض الإقلاع** إن غاب `BETTER_AUTH_SECRET` أو `BETTER_AUTH_URL` في الإنتاج
-(`src/lib/auth/config.ts`). لا يوجد سر احتياطي.
+في الإنتاج (`NODE_ENV=production`) **يخرج الخادم برمز 1 ولا يقلع** إن غاب `DATABASE_URL` أو
+`BETTER_AUTH_SECRET` (أو كان أقصر من 32 حرفاً) أو `BETTER_AUTH_URL` (أو لم يكن https)،
+ويكتب في السجل سطر `[start] refusing to start in production` مع اسم المتغير الناقص.
+الفحص في `scripts/start.mjs` (أمر `startCommand`) قبل تحميل الخادم، ويتكرر في `src/lib/db.ts`
+لأي مدخل آخر. **لا يوجد رجوع إلى PGlite في الإنتاج** ولا سر احتياطي؛ PGlite للتطوير المحلي فقط.
 
 ## Owner verification (تفعيل صاحب الديوان)
 
@@ -59,3 +63,17 @@ update tribes t set gold = gold + coalesce((select sum(removed) from cap_clamp_l
 
 `nitro` مثبّت على نسخة بعينها (`3.0.260610-beta`) دون `^`، و`.npmrc` فيه `save-exact=true`.
 لا تُرقّه إلا بعد بناء واختبار كاملين.
+
+## فحص الصحة
+
+`GET /health` ينفّذ `select 1`، ويرد 200 `ok`، أو 503 إن فشلت القاعدة أو تأخرت أكثر من 4 ثوانٍ.
+`render.yaml` يضبط `healthCheckPath: /health`. الفحص لا يحرّك العالم ولا يُحسب نشاطاً للاعبين، فإيقاف
+الإنتاج بعد 6 ساعات من غياب اللاعبين باقٍ كما هو.
+ملاحظة لـ DevOps: ما دامت خدمة Render مستيقظة، يصل فحص Render كل بضع ثوانٍ إلى Neon. خدمة Render
+المجانية تنام بعد 15 دقيقة بلا زيارات، والمتوقع أن تتوقف الفحوص معها. على DevOps أن يتأكد من ذلك
+في لوحة Neon بعد النشر.
+
+## المعاينات
+
+`previews.generation: "off"` في جذر `render.yaml`: لا بيئات معاينة. لم يُضبط `previews` على الخدمة، وغيابه
+يعني تعطيل معاينات PR (الحقل على الخدمة يقبل manual/automatic فقط). المرجع: https://render.com/docs/blueprint-spec

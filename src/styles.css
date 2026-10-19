@@ -60,6 +60,23 @@
   flex: none;
   overflow: hidden;
 }
+/* A tribe's tile shows its whole name (QA #15): the label may spill over the
+   neighbouring tiles and wraps to two short lines instead of being cut. */
+.cell-camp {
+  overflow: visible;
+  z-index: 2;
+}
+.tile-name {
+  position: relative;
+  width: max-content;
+  max-width: max(calc(var(--cell, 48px) * 2), 5.5rem);
+  font-size: 10px;
+  line-height: 1.15;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
 .cell-sand {
   background:
     radial-gradient(circle at 28% 36%, color-mix(in oklab, var(--color-dune) 70%, transparent) 0 22%, transparent 23%),

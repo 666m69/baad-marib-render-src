@@ -1,6 +1,10 @@
 # Render Blueprint for «بعد مأرب». Free web service in Frankfurt, next to Neon (aws-eu-central-1).
 # NO SECRETS IN THIS FILE: every secret is `sync: false`, so Render asks for it in the dashboard.
 # Not deployed yet. DevOps sets up Neon and fills the values.
+# No preview environments (root-level `previews.generation: off`). Per-service PR previews are
+# disabled by omitting `previews` on the service (that field only accepts manual/automatic).
+previews:
+  generation: "off" # quoted: a bare off is YAML 1.1 boolean false
 services:
   - type: web
     name: baad-marib
@@ -9,10 +13,13 @@ services:
     region: frankfurt
     branch: main
     autoDeploy: false
-    # The build runs the migrations (scripts/migrate.mjs), so DATABASE_URL must be set before the first deploy.
+    # The build runs the migrations (scripts/migrate.mjs) on DATABASE_URL_UNPOOLED (falls back to DATABASE_URL),
+    # so the database values must be set before the first deploy.
     buildCommand: npm ci && npm run build
-    startCommand: node .output/server/index.mjs
-    healthCheckPath: /
+    # Checks DATABASE_URL / BETTER_AUTH_SECRET / BETTER_AUTH_URL first and exits 1 if any is missing.
+    startCommand: node scripts/start.mjs
+    # Runs `select 1`: 200 "ok", or 503 when the database is unreachable.
+    healthCheckPath: /health
     envVars:
       - key: NODE_VERSION
         value: "22"
@@ -25,6 +32,9 @@ services:
         value: "1"
       # Neon Frankfurt, pooled endpoint ("-pooler" host) with ?sslmode=require.
       - key: DATABASE_URL
+        sync: false
+      # Neon Frankfurt, DIRECT (non-pooler) endpoint. Used ONLY by the migration runner during the build.
+      - key: DATABASE_URL_UNPOOLED
         sync: false
       # 32+ random characters. Required: the server will not start without it.
       - key: BETTER_AUTH_SECRET

@@ -237,7 +237,8 @@ export function MapView({
               return (
                 <div
                   key={col}
-                  className={`cell cell-${terrain} ${land} ${picked ? "cell-pick" : ""} ${mark?.kind === "clash" ? "cell-fight" : ""}`}
+                  className={`cell cell-${terrain} ${land} ${camp ? "cell-camp" : ""} ${picked ? "cell-pick" : ""} ${mark?.kind === "clash" ? "cell-fight" : ""}`}
+                  title={camp ? camp.name : undefined}
                 >
                   {mark && (
                     <span
@@ -253,7 +254,7 @@ export function MapView({
                         <TribeBanner name={camp.name} />
                         <TentMark own={camp.own} peace={camp.peace} />
                       </span>
-                      <span className="mt-0.5 max-w-11 truncate rounded-sm bg-bg/90 px-1 text-xs leading-none text-fg">{camp.name}</span>
+                      <span data-testid="tile-name" dir="rtl" className="tile-name mt-0.5 rounded-sm bg-bg/90 px-1 text-fg">{camp.name}</span>
                       {camp.structures > 1 && (
                         <span className="mt-0.5 flex gap-0.5" aria-hidden="true">
                           {Array.from({ length: Math.min(camp.structures, 5) }, (_, i) => (
