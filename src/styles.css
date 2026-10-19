@@ -1,0 +1,162 @@
+@import "@fontsource/ibm-plex-sans-arabic/arabic-400.css";
+@import "@fontsource/ibm-plex-sans-arabic/arabic-500.css";
+@import "@fontsource/ibm-plex-sans-arabic/arabic-600.css";
+@import "@fontsource/amiri/arabic-400.css";
+@import "@fontsource/amiri/arabic-700.css";
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0e1210;
+  --color-surface: #171c18;
+  --color-surface-2: #212822;
+  --color-fg: #f3ecdf;
+  --color-muted: #b3a894;
+  --color-faint: #7d7466;
+  --color-accent: #c6a15a;
+  --color-accent-fg: #1a1408;
+  --color-line: #2e382f;
+  --color-danger: #a6533a;
+  --color-danger-fg: #f8ece6;
+  --color-oasis: #2f6d58;
+  --color-oasis-fg: #e7f3ee;
+  --color-sand: #1b1814;
+  --color-dune: #262017;
+  --color-scrub: #1a231c;
+  --color-wadi: #162226;
+  --color-pool: #143028;
+  --font-sans: "IBM Plex Sans Arabic", "DejaVu Sans", "Noto Naskh Arabic", sans-serif;
+  --font-display: "Amiri", "FreeSerif", "Noto Naskh Arabic", serif;
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1.25rem;
+  --radius-xl: 1.75rem;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body {
+    margin: 0;
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  h1, h2, h3 {
+    text-wrap: balance;
+  }
+}
+
+.cell {
+  width: var(--cell, 48px);
+  height: var(--cell, 48px);
+  position: relative;
+  flex: none;
+  overflow: hidden;
+}
+.cell-sand {
+  background:
+    radial-gradient(circle at 28% 36%, color-mix(in oklab, var(--color-dune) 70%, transparent) 0 22%, transparent 23%),
+    var(--color-sand);
+}
+.cell-dune {
+  background:
+    linear-gradient(155deg, transparent 46%, color-mix(in oklab, var(--color-accent) 22%, transparent) 47% 54%, transparent 55%),
+    var(--color-dune);
+}
+.cell-scrub {
+  background:
+    radial-gradient(circle at 62% 68%, color-mix(in oklab, var(--color-oasis) 55%, transparent) 0 4px, transparent 5px),
+    var(--color-scrub);
+}
+.cell-wadi {
+  background:
+    linear-gradient(90deg, transparent 38%, color-mix(in oklab, var(--color-oasis) 28%, var(--color-wadi)) 38% 62%, transparent 62%),
+    var(--color-wadi);
+}
+.cell-oasis {
+  background:
+    radial-gradient(circle at 50% 58%, color-mix(in oklab, var(--color-oasis) 70%, transparent) 0 10px, transparent 11px),
+    var(--color-pool);
+}
+.cell-mine {
+  box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--color-accent) 85%, transparent);
+}
+.cell-silent {
+  box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--color-accent) 45%, transparent);
+}
+.cell-foreign {
+  box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--color-fg) 28%, transparent);
+}
+.cell-silent-foreign {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-fg) 18%, transparent);
+}
+.cell-dispute {
+  background-color: color-mix(in oklab, var(--color-danger) 28%, transparent);
+}
+.cell-pick {
+  box-shadow: inset 0 0 0 2px var(--color-fg);
+}
+.cell-fight {
+  background-color: color-mix(in oklab, var(--color-danger) 22%, transparent);
+}
+.pin {
+  position: absolute;
+  top: 2px;
+  inset-inline-end: 2px;
+  min-width: 1.1rem;
+  padding-inline: 2px;
+  border-radius: 2px;
+  font-size: 9px;
+  line-height: 1.3;
+  text-align: center;
+}
+.pin-fight {
+  background: var(--color-danger);
+  color: var(--color-danger-fg);
+  animation: clash 0.8s ease-out infinite;
+}
+.pin-saalik {
+  background: var(--color-bg);
+  color: var(--color-accent);
+  border: 1px solid var(--color-accent);
+}
+.pin-march {
+  width: 8px;
+  height: 8px;
+  min-width: 0;
+  padding: 0;
+  border-radius: 999px;
+  background: var(--color-accent);
+}
+.march-dash {
+  stroke-dasharray: 6 8;
+  animation: march 1.1s linear infinite;
+}
+@keyframes march {
+  to { stroke-dashoffset: -28; }
+}
+.map-frame {
+  box-shadow: inset 0 0 72px color-mix(in oklab, var(--color-bg) 55%, transparent);
+}
+.clash-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: clash 0.8s ease-out infinite;
+}
+@keyframes clash {
+  from { opacity: 0.9; }
+  to { opacity: 0.15; }
+}
+.task-dot {
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 35%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .march-dash, .clash-ring, .pin-fight { animation: none; }
+}

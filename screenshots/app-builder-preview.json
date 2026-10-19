@@ -1,0 +1,36 @@
+{
+  "url": "http://127.0.0.1:8080/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "بعد مأرب",
+      "hasCanvas": false,
+      "bodyTextLen": 200,
+      "bodyTextHash": "15455132682fbcdb614a0c1f249d5c87018dcfc5fecf540f358e6af957804503",
+      "bodyTextPrefix": "وادي واحد بعد مأرب القبائل بعد انهيار السد. اختر شيخاً وراية، وا",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "بعد مأرب",
+      "hasCanvas": false,
+      "bodyTextLen": 200,
+      "bodyTextHash": "15455132682fbcdb614a0c1f249d5c87018dcfc5fecf540f358e6af957804503",
+      "bodyTextPrefix": "وادي واحد بعد مأرب القبائل بعد انهيار السد. اختر شيخاً وراية، وا",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-preview.json"
+}
