@@ -43,8 +43,13 @@ update "user" set "emailVerified" = true where lower(email) = lower('OWNER_EMAIL
 - تسجيل الدخول: 5 محاولات في الدقيقة لكل IP.
 - إنشاء الحساب: 5 في الساعة لكل IP.
 - العدادات في جدول `"rateLimit"` (migration 0018)، فتصمد بعد إعادة التشغيل.
-- IP العميل: `CF-Connecting-IP` (يضعه Cloudflare أمام Render)، وإلا الخانة التي أضافها
-  آخر proxy في `X-Forwarded-For` (`TRUST_PROXY_HOPS`، الافتراضي 1). لا نثق أبداً بأول خانة.
+- IP العميل: من `X-Forwarded-For`، وهي الترويسة التي توثّقها Render لعنوان العميل
+  (https://render.com/articles/how-render-handles-ddos-attacks). نقرأ الخانة رقم `TRUST_PROXY_HOPS`
+  من اليمين: على Render السلسلة تنتهي بـ «العميل، حافة Cloudflare، موزّع Render»، فالقيمة 3
+  (`render.yaml`، وهي الافتراضي إذا `RENDER=true`). ما يكتبه العميل يقع يسار ذلك فلا يُقرأ أبداً.
+  `CF-Connecting-IP` لا نقرؤه.
+- `/health`: ‏20 طلباً في الدقيقة لكل IP، وبعدها 429 بلا لمس القاعدة. فحص Render الداخلي يصل بلا
+  `X-Forwarded-For`، فلا يُحدّ أبداً.
 
 ## قبل أول ترحيل على قاعدة فيها لاعبون
 

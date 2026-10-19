@@ -13,7 +13,7 @@ process.env.NODE_ENV = "test";
 
 const db = await import("@/lib/db");
 const { auth } = await import("@/lib/auth/server");
-const { withClientIp } = await import("@/lib/auth/client-ip");
+const { RENDER_PROXY_HOPS, withClientIp } = await import("@/lib/auth/client-ip");
 const diwan = await import("./diwan.server");
 
 const ORIGIN = "http://localhost:8080";
@@ -24,12 +24,15 @@ function call(path: string, body: unknown, headers: Record<string, string>) {
     headers: { "content-type": "application/json", origin: ORIGIN, ...headers },
     body: JSON.stringify(body),
   });
-  // Same wrapper the /api/auth/$ route uses.
-  return withClientIp(request).then((r) => auth.handler(r));
+  // Same wrapper the /api/auth/$ route uses, with Render's hop count.
+  return withClientIp(request, RENDER_PROXY_HOPS).then((r) => auth.handler(r));
 }
 
+/** Headers as they reach the app on Render: `<client>, <Cloudflare edge>, <Render LB>`. */
+const via = (ip: string, forged = "") => ({ "x-forwarded-for": `${forged ? `${forged}, ` : ""}${ip}, 172.71.195.123, 10.226.90.65` });
+
 const signUp = (email: string, ip: string) =>
-  call("/sign-up/email", { email, password: "kahf-marib-2026", name: "شيخ" }, { "cf-connecting-ip": ip });
+  call("/sign-up/email", { email, password: "kahf-marib-2026", name: "شيخ" }, via(ip));
 
 test("an unverified account registered with the owner's email gets nothing; the documented SQL line grants the diwan", async () => {
   process.env.ADMIN_EMAIL = "owner@baad-marib.test";
@@ -56,7 +59,7 @@ test("an unverified account registered with the owner's email gets nothing; the 
 test("sign-in is limited to 5 tries a minute per client IP", async () => {
   const wrong = (ip: Record<string, string>) =>
     call("/sign-in/email", { email: "nobody@baad-marib.test", password: "wrong-password" }, ip);
-  const a = { "cf-connecting-ip": "198.51.100.7" };
+  const a = via("198.51.100.7");
   const statuses: number[] = [];
   for (let i = 0; i < 6; i++) statuses.push((await wrong(a)).status);
   assert.deepEqual(statuses.slice(0, 5).includes(429), false, statuses.join(","));
@@ -66,7 +69,7 @@ test("sign-in is limited to 5 tries a minute per client IP", async () => {
   const rows = await sql`select key from "rateLimit" where key like '%198.51.100.7%'`;
   assert.equal(rows.length, 1);
   // Another client is not affected.
-  assert.notEqual((await wrong({ "cf-connecting-ip": "198.51.100.8" })).status, 429);
+  assert.notEqual((await wrong(via("198.51.100.8"))).status, 429);
 });
 
 test("a forged leftmost X-Forwarded-For or our own header cannot dodge the limit", async () => {
@@ -75,8 +78,9 @@ test("a forged leftmost X-Forwarded-For or our own header cannot dodge the limit
     const res = await call(
       "/sign-in/email",
       { email: "nobody@baad-marib.test", password: "wrong-password" },
-      // A new fake address every time, but the proxy-added hop stays the same.
-      { "x-forwarded-for": `10.9.9.${i}, 192.0.2.44`, "x-baad-client-ip": `10.8.8.${i}` },
+      // A new fake address every time (leftmost XFF, CF-Connecting-IP, our own header),
+      // but the hops Render's proxies append stay the same.
+      { ...via("192.0.2.44", `10.9.9.${i}`), "cf-connecting-ip": `10.7.7.${i}`, "x-baad-client-ip": `10.8.8.${i}` },
     );
     statuses.push(res.status);
   }
@@ -96,14 +100,14 @@ test("a wrong password says so, instead of claiming the password is too short (Q
   const res = await call(
     "/sign-in/email",
     { email: "rightpass@baad-marib.test", password: "a-long-but-wrong-password" },
-    { "cf-connecting-ip": "198.51.100.51" },
+    via("198.51.100.51"),
   );
   assert.equal(res.status, 401);
   const body = (await res.json()) as { code?: string; message?: string };
   const text = arabicAuthError({ ...body, status: res.status });
   assert.equal(text, "البريد أو كلمة السر غير صحيحة.");
   assert.doesNotMatch(text, /قصيرة/);
-  const short = await call("/sign-up/email", { email: "s@baad-marib.test", password: "short", name: "x" }, { "cf-connecting-ip": "198.51.100.52" });
+  const short = await call("/sign-up/email", { email: "s@baad-marib.test", password: "short", name: "x" }, via("198.51.100.52"));
   assert.equal(arabicAuthError({ ...((await short.json()) as object), status: short.status }), "كلمة السر قصيرة. ثمانية أحرف على الأقل.");
   assert.equal(arabicAuthError({ status: 429 }), "محاولات كثيرة. انتظر دقيقة ثم حاول.");
 });
@@ -115,7 +119,7 @@ test("after sign-out, replaying ALL the old cookies is no longer a session (QA #
   assert.match(jar, /session_token=/);
   const session = () => auth.api.getSession({ headers: new Headers({ cookie: jar }) });
   assert.ok((await session())?.user, "signed in before sign-out");
-  const out = await call("/sign-out", {}, { cookie: jar, "cf-connecting-ip": "198.51.100.60" });
+  const out = await call("/sign-out", {}, { cookie: jar, ...via("198.51.100.60") });
   assert.equal(out.status, 200);
   assert.equal(await session(), null, "the old cookies must not work after sign-out");
 });

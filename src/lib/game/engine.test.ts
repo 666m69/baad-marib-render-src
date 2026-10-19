@@ -371,3 +371,124 @@ test("raiding a bandit den with a full بيت المال: the gold is not credit
   assert.match(String(rep.body), /بقي في الوكر .*ذهب لضيق بيت المال/, String(rep.body));
   assert.doesNotMatch(String(rep.body), /ضاع/);
 });
+
+// ---- QA PR #3 N3: a beaten den / صعلوك that still holds loot is not deleted ----
+
+async function marchNow(attacker: string) {
+  const s = await sql();
+  await s`update marches set arrive_at = now() - interval '1 second' where attacker_id = ${attacker} and status = 'march'`;
+  await dueTick();
+  await engine.loadWorld(attacker);
+}
+
+test("N3: a den beaten by a raider with full stores stays on the map with every good it did not lose", async () => {
+  await found("u-n3-a", "بنو الوهط");
+  const s = await sql();
+  const me = await row("u-n3-a");
+  await isolate("u-n3-a");
+  const [den] = await s`insert into bandits (x, y, tier, infantry, cavalry, gold, food, water, wood, stone)
+          values (${Number(me.x) + 1}, ${Number(me.y) - 1}, 1, 1, 0, 400, 300, 200, 100, 50) returning id`;
+  // Full بيت المال and full stores except a little food room.
+  await s`update tribes set peace_until = null, infantry = 200, cavalry = 0, gold = 3000, water = 3000, wood = 3000, stone = 3000, food = 2990 where user_id = 'u-n3-a'`;
+  const before = await stockOf("u-n3-a");
+  const res = await engine.attack("u-n3-a", { targetKind: "bandit", targetId: String(den.id), infantry: 200, cavalry: 0 } as never);
+  assert.ok(res.ok, res.ok ? "" : res.error);
+  await marchNow("u-n3-a");
+  const [kept] = await s`select * from bandits where id = ${den.id}`;
+  assert.ok(kept, "the den with goods left is not deleted");
+  assert.equal(Number(kept.infantry) + Number(kept.cavalry), 0, "its guards are gone");
+  assert.equal(Number(kept.gold), 400, "no gold room: all the gold stays in the den");
+  const after = await stockOf("u-n3-a");
+  const gotFood = after.food - before.food;
+  assert.ok(gotFood >= 0 && gotFood <= 11, `food room was 10, got ${gotFood}`);
+  assert.ok(Math.abs(Number(kept.food) - (300 - gotFood)) <= 1, `den food ${kept.food} + carried ${gotFood} = 300`);
+  const [rep] = await s`select body from reports where user_id = 'u-n3-a' and kind = 'attack' order by id desc limit 1`;
+  assert.match(String(rep.body), /بقي في الوكر/);
+  assert.match(String(rep.body), /الوكر باقٍ بلا حرس/);
+});
+
+test("N3: a guardless den gives up everything that fits, and is removed once empty", async () => {
+  await found("u-n3-b", "بنو القاع");
+  const s = await sql();
+  const me = await row("u-n3-b");
+  await isolate("u-n3-b");
+  const [den] = await s`insert into bandits (x, y, tier, infantry, cavalry, gold, food, water, wood, stone)
+          values (${Number(me.x) - 1}, ${Number(me.y) + 1}, 1, 0, 0, 40, 30, 20, 10, 5) returning id`;
+  await s`update tribes set peace_until = null, infantry = 100, cavalry = 0, gold = 0, water = 0, wood = 0, stone = 0, food = 0 where user_id = 'u-n3-b'`;
+  const renown0 = Number((await row("u-n3-b")).renown);
+  const res = await engine.attack("u-n3-b", { targetKind: "bandit", targetId: String(den.id), infantry: 100, cavalry: 0 } as never);
+  assert.ok(res.ok, res.ok ? "" : res.error);
+  await marchNow("u-n3-b");
+  const left = await s`select * from bandits where id = ${den.id}`;
+  assert.equal(left.length, 0, "empty and unguarded: the den is gone");
+  const after = await stockOf("u-n3-b");
+  assert.ok(after.gold >= 40 && after.food >= 30 && after.water >= 20 && after.wood >= 10 && after.stone >= 5, JSON.stringify(after));
+  assert.equal(Number((await row("u-n3-b")).renown), renown0, "no renown for looting an unguarded den");
+});
+
+test("N3: a صعلوك beaten while the raider's بيت المال is full keeps his gold and stays", async () => {
+  await found("u-n3-c", "بنو الحزن");
+  const s = await sql();
+  const me = await row("u-n3-c");
+  await isolate("u-n3-c");
+  await s`delete from saalik`;
+  const [man] = await s`insert into saalik (name, line, x, y, cavalry, gold, food)
+          values ('الخليع', 'سطر', ${Number(me.x) + 1}, ${Number(me.y) + 1}, 1, 90, 60) returning id`;
+  await s`update tribes set peace_until = null, infantry = 200, cavalry = 0, gold = 3000, food = 3000 where user_id = 'u-n3-c'`;
+  const res = await engine.attack("u-n3-c", { targetKind: "saalik", targetId: String(man.id), infantry: 200, cavalry: 0 } as never);
+  assert.ok(res.ok, res.ok ? "" : res.error);
+  await s`update world_meta set last_spawn = now() where id = 1`;
+  await marchNow("u-n3-c");
+  const [kept] = await s`select * from saalik where id = ${man.id}`;
+  assert.ok(kept, "the صعلوك with gold left is not deleted");
+  assert.equal(Number(kept.cavalry), 0);
+  assert.equal(Number(kept.gold), 90);
+  assert.equal(Number(kept.food), 60);
+  const [rep] = await s`select body from reports where user_id = 'u-n3-c' and kind = 'attack' order by id desc limit 1`;
+  assert.match(String(rep.body), /الصعلوك باقٍ بلا فرسان/);
+});
+
+test("N3: an ambushing den wiped out on the road keeps the hoard it already held", async () => {
+  await found("u-n3-d", "بنو السهب");
+  const s = await sql();
+  const me = await row("u-n3-d");
+  await isolate("u-n3-d");
+  const dir = Number(me.x) < balance.WORLD / 2 ? 1 : -1;
+  const [target] = await s`insert into bandits (x, y, tier, infantry, cavalry, gold, food, water, wood, stone)
+          values (${Number(me.x) + 6 * dir}, ${Number(me.y)}, 1, 1, 0, 0, 0, 0, 0, 0) returning id`;
+  const [ambusher] = await s`insert into bandits (x, y, tier, infantry, cavalry, gold, food, water, wood, stone)
+          values (${Number(me.x) + 3 * dir}, ${Number(me.y)}, 1, 1, 0, 77, 66, 55, 44, 33) returning id`;
+  await s`update tribes set peace_until = null, infantry = 300, cavalry = 0 where user_id = 'u-n3-d'`;
+  const res = await engine.attack("u-n3-d", { targetKind: "bandit", targetId: String(target.id), infantry: 300, cavalry: 0 } as never);
+  assert.ok(res.ok, res.ok ? "" : res.error);
+  await marchNow("u-n3-d");
+  const [rep] = await s`select title from reports where user_id = 'u-n3-d' and kind = 'ambush' order by id desc limit 1`;
+  assert.ok(rep, "the march was ambushed");
+  const [den] = await s`select * from bandits where id = ${ambusher.id}`;
+  assert.ok(den, "the wiped-out ambusher still holds goods, so it stays");
+  assert.equal(Number(den.infantry) + Number(den.cavalry), 0);
+  assert.deepEqual([den.gold, den.food, den.water, den.wood, den.stone].map(Number), [77, 66, 55, 44, 33]);
+});
+
+test("N3: the engine deletes dens and صعاليك only through the guards-and-goods check", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("./engine.server.ts", import.meta.url), "utf8");
+  assert.equal(src.match(/delete from bandits/g)?.length, 1, "only settleDen deletes a den");
+  // settleSaalik, plus hireSaalik (he rides off with the tribe that hired him, purse paid).
+  assert.equal(src.match(/delete from saalik/g)?.length, 2);
+  assert.equal(balance.keepsHoard(0, { water: 0, food: 1, gold: 0, wood: 0, stone: 0 }), true);
+  assert.equal(balance.keepsHoard(0, { water: 0, food: 0, gold: 0, wood: 0, stone: 0 }), false);
+  assert.equal(balance.keepsHoard(3, { water: 0, food: 0, gold: 0, wood: 0, stone: 0 }), true);
+  assert.deepEqual(balance.hoardLeft({ water: 5, food: 5, gold: 5, wood: 5, stone: 5 }, { water: 5, food: 2, gold: 0, wood: 9, stone: 0 }), { water: 0, food: 3, gold: 5, wood: 0, stone: 5 });
+  assert.equal(balance.hoardShare(0), 1);
+  assert.equal(balance.hoardShare(4), balance.LOOT_SHARE);
+});
+
+test("N1/N2: founding a tribe named «الكعبة», «الله أكبر», «Muhammad» or only tatweel is refused", async () => {
+  for (const name of ["الكعبة", "الله أكبر", "Muhammad", "سبحانالله", "ـــــ", "ٮنو مكة"]) {
+    const res = await engine.foundTribe(`u-n1-${name.length}-${name.codePointAt(0)}`, { name, sheikh: "قيس", trait: "guard", lineage: "aws" });
+    assert.equal(res.ok, false, name);
+  }
+  const sheikh = await engine.foundTribe("u-n1-sheikh", { name: "بنو الجرف", sheikh: "كعب بن مالك", trait: "guard", lineage: "aws" });
+  assert.equal(sheikh.ok, false, "the sheikh (player) name goes through the same list");
+});

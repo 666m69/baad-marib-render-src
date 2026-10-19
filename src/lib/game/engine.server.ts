@@ -67,6 +67,9 @@ import {
   growPeople,
   capsOf,
   emptyLevels,
+  hoardLeft,
+  hoardShare,
+  keepsHoard,
   keptNote,
   lootTransfer,
   studyOpen,
@@ -783,6 +786,41 @@ async function loadBandits(sql: Sql) {
   return sql<Row>`select id, x, y, tier, infantry, cavalry, gold, food, water, wood, stone from bandits`;
 }
 
+function hoardOf(row: Row): Stock {
+  return { water: num(row.water), food: num(row.food), gold: num(row.gold), wood: num(row.wood), stone: num(row.stone) };
+}
+
+/**
+ * QA N3: a den is deleted only once it has neither guards nor goods. A beaten
+ * den that still holds loot stays on the map, unguarded, with what is left, so
+ * nothing the raids carried into it vanishes. Returns true when the den stays.
+ */
+async function settleDen(sql: Sql, id: number, infantry: number, cavalry: number, hoard: Stock) {
+  const inf = Math.max(0, Math.floor(infantry));
+  const cav = Math.max(0, Math.floor(cavalry));
+  if (!keepsHoard(inf + cav, hoard)) {
+    await sql`delete from bandits where id = ${id}`;
+    return false;
+  }
+  await sql`
+    update bandits set infantry = ${inf}, cavalry = ${cav},
+      water = ${hoard.water}, food = ${hoard.food}, gold = ${hoard.gold}, wood = ${hoard.wood}, stone = ${hoard.stone}
+    where id = ${id}
+  `;
+  return true;
+}
+
+/** QA N3, for a صعلوك: removed only once he has neither riders nor gold/food left. */
+async function settleSaalik(sql: Sql, id: number, cavalry: number, purse: Stock) {
+  const cav = Math.max(0, Math.floor(cavalry));
+  if (!keepsHoard(cav, purse)) {
+    await sql`delete from saalik where id = ${id}`;
+    return false;
+  }
+  await sql`update saalik set cavalry = ${cav}, gold = ${purse.gold}, food = ${purse.food} where id = ${id}`;
+  return true;
+}
+
 async function sendHome(
   sql: Sql,
   march: Row,
@@ -959,14 +997,18 @@ async function finishSpoil(sql: Sql, march: Row, attackerId: string, attackerNam
     const leftCav = Math.max(0, cavalry - battle.atkCavLoss);
     const dInf = Math.max(0, num(bandit.infantry) - battle.defInfLoss);
     const dCav = Math.max(0, num(bandit.cavalry) - battle.defCavLoss);
-    if (battle.attackerWins || dInf + dCav <= 0) await sql`delete from bandits where id = ${num(bandit.id)}`;
+    let denStays = false;
+    if (battle.attackerWins || dInf + dCav <= 0) denStays = await settleDen(sql, num(bandit.id), 0, 0, hoardOf(bandit));
     else await sql`update bandits set infantry = ${dInf}, cavalry = ${dCav} where id = ${num(bandit.id)}`;
+    const beaten = battle.attackerWins || dInf + dCav <= 0;
     await writeReport(
       sql,
       attackerId,
       "spoil",
-      battle.attackerWins ? "رُفع القطاع عن المرعى" : "صدّ القطاع التطهير",
-      `المعسكر على مرعاك. خسائرك ${troopPhrase(battle.atkInfLoss, battle.atkCavLoss)}. مخزن الديرة لم يُفتح.`,
+      battle.attackerWins ? (denStays ? "كُسر حرس القطاع" : "رُفع القطاع عن المرعى") : "صدّ القطاع التطهير",
+      `المعسكر على مرعاك. خسائرك ${troopPhrase(battle.atkInfLoss, battle.atkCavLoss)}. مخزن الديرة لم يُفتح.${
+        beaten && denStays ? " بقي الوكر على المرعى بلا حرس وفيه ماله؛ أغِر عليه لتحمل ما فيه ويُرفع." : ""
+      }`,
       battle.attackerWins,
     );
     await sendHome(sql, march, leftInf, leftCav, toX, toY);
@@ -1043,6 +1085,7 @@ async function resolveOne(sql: Sql, march: Row) {
   const targetBanditId = march.target_kind === "bandit" ? num(march.target_id) : -1;
   const ambusher = bandits.find((b) => {
     if (num(b.id) === targetBanditId) return false;
+    if (num(b.infantry) + num(b.cavalry) <= 0) return false; // a guardless den lies in wait for no one
     return lineNear(fromX, fromY, toX, toY, num(b.x), num(b.y), AMBUSH_RANGE);
   });
 
@@ -1057,7 +1100,7 @@ async function resolveOne(sql: Sql, march: Row) {
     const dInf = num(ambusher.infantry) - battle.defInfLoss;
     const dCav = num(ambusher.cavalry) - battle.defCavLoss;
     if (dInf + dCav <= 0) {
-      await sql`delete from bandits where id = ${num(ambusher.id)}`;
+      await settleDen(sql, num(ambusher.id), 0, 0, hoardOf(ambusher));
     } else {
       await sql`update bandits set infantry = ${dInf}, cavalry = ${dCav} where id = ${num(ambusher.id)}`;
     }
@@ -1108,22 +1151,20 @@ async function resolveOne(sql: Sql, march: Row) {
     const label = banditLabel(num(bandit.tier));
     let loot: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
     let spill = "";
+    const hoard = hoardOf(bandit);
+    const guards = num(bandit.infantry) + num(bandit.cavalry);
     if (battle.attackerWins) {
-      const hoard: Stock = {
-        water: num(bandit.water),
-        food: num(bandit.food),
-        gold: num(bandit.gold),
-        wood: num(bandit.wood),
-        stone: num(bandit.stone),
-      };
       // Carry only what fits: the rest is left in the den (QA #20 / MZ decision).
-      const move = lootTransfer(swell(takeLoot(hoard, carryOf(infantry, cavalry)), atkTrait, atkRenown), hoard, await roomOf(sql, attackerId));
-      await praise(sql, attackerId);
-      await sql`delete from bandits where id = ${num(bandit.id)}`;
+      // A guarded den gives up LOOT_SHARE; a guardless one everything that fits.
+      const want = swell(takeLoot(hoard, carryOf(infantry, cavalry), hoardShare(guards)), atkTrait, atkRenown);
+      const move = lootTransfer(want, hoard, await roomOf(sql, attackerId));
+      if (guards > 0) await praise(sql, attackerId);
       loot = (await creditCapped(sql, attackerId, move.moved)).gain;
-      spill = keptNote(move.left, "في الوكر");
+      // QA N3: the den is not deleted while goods remain in it.
+      const stays = await settleDen(sql, num(bandit.id), 0, 0, hoardLeft(hoard, loot));
+      spill = [keptNote(move.left, "في الوكر"), stays ? "الوكر باقٍ بلا حرس، وفيه بقية ماله." : ""].filter(Boolean).join(" ");
     } else if (dInf + dCav <= 0) {
-      await sql`delete from bandits where id = ${num(bandit.id)}`;
+      await settleDen(sql, num(bandit.id), 0, 0, hoard);
     } else {
       await sql`update bandits set infantry = ${dInf}, cavalry = ${dCav} where id = ${num(bandit.id)}`;
     }
@@ -1165,15 +1206,18 @@ async function resolveOne(sql: Sql, march: Row) {
     const dCav = Math.max(0, num(man.cavalry) - battle.defCavLoss);
     let loot: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
     let spill = "";
+    const purse: Stock = { water: 0, food: num(man.food), gold: num(man.gold), wood: 0, stone: 0 };
+    const riders = num(man.cavalry);
     if (battle.attackerWins) {
-      const purse: Stock = { water: 0, food: num(man.food), gold: num(man.gold), wood: 0, stone: 0 };
-      const move = lootTransfer(swell(takeLoot(purse, carryOf(infantry, cavalry)), atkTrait, atkRenown), purse, await roomOf(sql, attackerId));
-      await sql`delete from saalik where id = ${num(man.id)}`;
+      const want = swell(takeLoot(purse, carryOf(infantry, cavalry), hoardShare(riders)), atkTrait, atkRenown);
+      const move = lootTransfer(want, purse, await roomOf(sql, attackerId));
       loot = (await creditCapped(sql, attackerId, move.moved)).gain;
-      spill = keptNote(move.left, "مع الصعلوك");
-      await praise(sql, attackerId);
+      // QA N3: the صعلوك stays (without riders) while he still holds gold or food.
+      const stays = await settleSaalik(sql, num(man.id), 0, hoardLeft(purse, loot));
+      spill = [keptNote(move.left, "مع الصعلوك"), stays ? "الصعلوك باقٍ بلا فرسان، ومعه بقية ماله." : ""].filter(Boolean).join(" ");
+      if (riders > 0) await praise(sql, attackerId);
     } else if (dCav <= 0) {
-      await sql`delete from saalik where id = ${num(man.id)}`;
+      await settleSaalik(sql, num(man.id), 0, purse);
     } else {
       await sql`update saalik set cavalry = ${dCav} where id = ${num(man.id)}`;
     }
@@ -1377,14 +1421,15 @@ async function raids(sql: Sql) {
       returning user_id
     `;
     if (!hit.length) continue;
-    if (bInf + bCav <= 0) await sql`delete from bandits where id = ${num(bandit.id)}`;
-    else
-      await sql`
-        update bandits set infantry = ${bInf}, cavalry = ${bCav},
-          water = water + ${loot.water}, food = food + ${loot.food}, gold = gold + ${loot.gold},
-          wood = wood + ${loot.wood}, stone = stone + ${loot.stone}
-        where id = ${num(bandit.id)}
-      `;
+    // QA N3: the den keeps its old hoard plus the haul even if no raider is left.
+    const held = hoardOf(bandit);
+    await settleDen(sql, num(bandit.id), bInf, bCav, {
+      water: held.water + loot.water,
+      food: held.food + loot.food,
+      gold: held.gold + loot.gold,
+      wood: held.wood + loot.wood,
+      stone: held.stone + loot.stone,
+    });
     const label = banditLabel(num(bandit.tier));
     const taken = lootPhrase(loot);
     await writeReport(
@@ -1871,9 +1916,9 @@ async function found(
   input: { name: string; sheikh: string; trait: string; lineage?: string },
 ): Promise<string | null> {
   const name = cleanName(input.name);
-  if (!name) return "الاسم حرفان إلى ثمانية عشر، من غير رموز ولا ألفاظ نابية ولا انتحال للإدارة.";
+  if (!name) return "الاسم حرفان إلى ثمانية عشر، من غير رموز ولا ألفاظ نابية ولا أسماء مقدسة ولا انتحال للإدارة.";
   const sheikh = cleanName(input.sheikh);
-  if (!sheikh) return "اسم الشيخ حرفان إلى ثمانية عشر، من غير ألفاظ نابية ولا انتحال للإدارة.";
+  if (!sheikh) return "اسم الشيخ حرفان إلى ثمانية عشر، من غير ألفاظ نابية ولا أسماء مقدسة ولا انتحال للإدارة.";
   const line = lineageBy(input.lineage);
   const trait = line ? line.trait : input.trait;
   if (!isSheikhTrait(trait)) return "خصلة الشيخ غير معروفة.";

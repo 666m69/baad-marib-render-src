@@ -609,6 +609,33 @@ export function lootTransfer(want: Stock, have: Stock, room: Stock): { moved: St
   return { moved, left };
 }
 
+/** What stays with a den or a صعلوك after a raid moved `moved` out of `hoard` (never negative). */
+export function hoardLeft(hoard: Stock, moved: Stock): Stock {
+  const left: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
+  for (const key of Object.keys(left) as (keyof Stock)[]) {
+    left[key] = Math.max(0, Math.floor(hoard[key]) - Math.max(0, Math.floor(moved[key])));
+  }
+  return left;
+}
+
+export function hasGoods(stock: Stock) {
+  return (Object.keys(stock) as (keyof Stock)[]).some((key) => stock[key] > 0);
+}
+
+/**
+ * Share of a hoard a winning raid may carry off: LOOT_SHARE while guards
+ * stand, everything (that fits) once the den or the صعلوك has none left, so a
+ * guardless den is emptied and then removed (QA N3).
+ */
+export function hoardShare(guards: number) {
+  return guards > 0 ? LOOT_SHARE : 1;
+}
+
+/** QA N3: a beaten den / صعلوك is removed only when it has neither guards nor goods left. */
+export function keepsHoard(guards: number, left: Stock) {
+  return guards > 0 || hasGoods(left);
+}
+
 /** Report line for loot that did not fit the raider's stores and so stayed with the target. */
 export function keptNote(left: Stock, holder: string) {
   const bits: string[] = [];

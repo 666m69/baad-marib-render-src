@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { THREAT_RANGE, WORLD, chebyshev } from "@/lib/game/balance";
-import { genitive } from "@/lib/game/names";
+import { clashCaption } from "@/lib/game/names";
 import { clampCamera } from "@/lib/game/camera";
 import { fmtRemain } from "@/lib/game/format";
 import { terrainAt } from "@/lib/game/terrain";
@@ -130,7 +130,7 @@ export function MapView({
   for (const clash of world.clashes ?? []) {
     marks.set(`${clash.x}:${clash.y}`, {
       kind: "clash",
-      label: `معركة: ${clash.attacker} على ${genitive(clash.defender)}`,
+      label: `معركة: ${clashCaption(clash.attacker, clash.defender)}`,
     });
   }
   const latestClash = (world.clashes ?? [])[0] ?? null;
@@ -337,7 +337,7 @@ export function MapView({
         >
           <p className="text-xs text-accent">محاكاة المعركة</p>
           <p className="mt-1 text-pretty">
-            {caption.attacker} على {caption.defender}
+            {clashCaption(caption.attacker, caption.defender)}
           </p>
           <p className={caption.attackerWins ? "text-accent" : "text-danger"}>{caption.summary}</p>
         </button>
