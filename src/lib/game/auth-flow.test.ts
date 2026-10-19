@@ -123,3 +123,37 @@ test("after sign-out, replaying ALL the old cookies is no longer a session (QA #
   assert.equal(out.status, 200);
   assert.equal(await session(), null, "the old cookies must not work after sign-out");
 });
+
+// ---- QA N4: the account display name is checked at sign-up and on update ----
+
+test("sign-up with a blocked display name is refused (400 NAME_NOT_ALLOWED) and no user is stored", async () => {
+  const { arabicAuthError } = await import("./auth-errors");
+  for (const [i, name] of ["الكعبة", "محمّد", "Allah", "بني أحمد"].entries()) {
+    const email = `badname${i}@baad-marib.test`;
+    const res = await call("/sign-up/email", { email, password: "kahf-marib-2026", name }, via(`198.51.100.${70 + i}`));
+    assert.equal(res.status, 400, `${name}: ${await res.clone().text()}`);
+    const body = (await res.json()) as { code?: string };
+    assert.equal(body.code, "NAME_NOT_ALLOWED", name);
+    assert.match(arabicAuthError({ ...body, status: 400 }), /هذا الاسم غير مسموح/);
+    const sql = await db.getSql();
+    assert.equal((await sql`select id from "user" where email = ${email}`).length, 0, name);
+  }
+  const ok = await call("/sign-up/email", { email: "goodname@baad-marib.test", password: "kahf-marib-2026", name: "عبدالله" }, via("198.51.100.80"));
+  assert.equal(ok.status, 200, await ok.clone().text());
+});
+
+test("updating the display name to a blocked one is refused; an honest name is saved", async () => {
+  const up = await signUp("renamer@baad-marib.test", "198.51.100.81");
+  assert.equal(up.status, 200);
+  const jar = up.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+  const bad = await call("/update-user", { name: "سبحان الله" }, { cookie: jar, ...via("198.51.100.81") });
+  assert.equal(bad.status, 400, await bad.clone().text());
+  assert.equal(((await bad.json()) as { code?: string }).code, "NAME_NOT_ALLOWED");
+  const sql = await db.getSql();
+  const [before] = await sql`select name from "user" where email = 'renamer@baad-marib.test'`;
+  assert.equal(before.name, "شيخ", "the stored name did not change");
+  const good = await call("/update-user", { name: "مروان" }, { cookie: jar, ...via("198.51.100.81") });
+  assert.equal(good.status, 200, await good.clone().text());
+  const [after] = await sql`select name from "user" where email = 'renamer@baad-marib.test'`;
+  assert.equal(after.name, "مروان");
+});

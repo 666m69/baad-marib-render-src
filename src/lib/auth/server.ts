@@ -15,6 +15,7 @@ import { Pool } from "pg";
 import { ensureDbReady, getPglite } from "../db";
 import { CLIENT_IP_HEADER } from "./client-ip";
 import { authSettings } from "./config";
+import { displayNameHooks } from "./display-name";
 import { pgliteDialect } from "./pglite-dialect";
 import { AUTH_RATE_LIMIT } from "./rate-limit";
 
@@ -47,6 +48,8 @@ export const auth = betterAuth({
   // effect at once (QA #6: a replayed session_data cookie stayed valid 5 min).
   session: { cookieCache: { enabled: false } },
   rateLimit: AUTH_RATE_LIMIT,
+  // The account name goes through the same blocklist as tribe and sheikh names (QA N4).
+  databaseHooks: displayNameHooks,
   advanced: {
     ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] },
     // `__Host-` cookies: Secure, Path=/, no Domain, so no sibling host can set them.

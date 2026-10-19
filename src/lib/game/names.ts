@@ -81,14 +81,18 @@ function foldWord(word: string) {
   return out;
 }
 
-/** The words of a name, folded. */
+/** Words that are one word for every comparison: «بني» is the genitive of «بنو» (QA N4). */
+const WORD_ALIAS: Record<string, string> = { بني: "بنو" };
+
+/** The words of a name, folded («بني» read as «بنو»). */
 export function nameWords(raw: string) {
   return raw
     .normalize("NFKD") // ﷺ and other ligatures become their words first
     .replace(ARABIC_MARKS, "")
     .split(/[\s\u200B-\u200F_.-]+/)
     .map(foldWord)
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((w) => WORD_ALIAS[w] ?? w);
 }
 
 /** The whole name folded, with every space removed. */
@@ -289,9 +293,17 @@ export function letterCount(raw: string) {
   return [...normalizeName(raw)].filter((ch) => /\p{L}/u.test(ch)).length;
 }
 
-/** Trimmed, 2-18 letters/digits/spaces, at least 2 letters once normalized, and not blocked; null otherwise. */
+/** Arabic diacritics (tashkeel, shadda, sukun, dagger alef, Quranic marks), not tatweel. */
+const TASHKEEL = /[\u064B-\u065F\u0670\u06D6-\u06ED]/g;
+const INVISIBLE = /[\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g;
+
+/**
+ * Trimmed, 2-18 letters/digits/spaces, at least 2 letters once normalized, and
+ * not blocked; null otherwise. Diacritics are dropped first (QA N4), so «محمّد»
+ * is judged as «محمد» (blocked), not refused as a symbol, and «خالِد» is kept as «خالد».
+ */
 export function cleanName(raw: string) {
-  const name = raw.replace(/[\u200B-\u200F\u202A-\u202E]/g, "").replace(/\s+/g, " ").trim();
+  const name = raw.normalize("NFC").replace(INVISIBLE, "").replace(TASHKEEL, "").replace(/\s+/g, " ").trim();
   if (name.length < 2 || name.length > 18) return null;
   if (!/^[\p{L}\p{N} ]+$/u.test(name)) return null;
   if (letterCount(name) < 2) return null;
@@ -310,4 +322,14 @@ export function genitive(name: string) {
 /** The battle caption on the map: «قبيلة الريح على بني السراب», never «على بنو» (QA #17, MapView). */
 export function clashCaption(attacker: string, defender: string) {
   return `${attacker} على ${genitive(defender)}`;
+}
+
+/**
+ * The account display name (Better Auth `user.name`), checked against the same
+ * blocklist at sign-up and on every update (QA N4). Any characters are allowed
+ * here (it is not a map label), but not a blocked name.
+ */
+export function blockedDisplayName(raw: unknown) {
+  if (typeof raw !== "string") return false;
+  return blockedName(raw.normalize("NFC").replace(INVISIBLE, ""));
 }

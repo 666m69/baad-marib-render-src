@@ -492,3 +492,15 @@ test("N1/N2: founding a tribe named «الكعبة», «الله أكبر», «M
   const sheikh = await engine.foundTribe("u-n1-sheikh", { name: "بنو الجرف", sheikh: "كعب بن مالك", trait: "guard", lineage: "aws" });
   assert.equal(sheikh.ok, false, "the sheikh (player) name goes through the same list");
 });
+
+test("N4: «بني …» is the same tribe name as «بنو …», so it cannot pass as a second tribe", async () => {
+  await found("u-n4-a", "بنو الأثل");
+  for (const name of ["بني الأثل", "بنى الأثل", "بنـي الأثل"]) {
+    const res = await engine.foundTribe(`u-n4-${name.length}-${name.codePointAt(2)}`, { name, sheikh: "قيس", trait: "guard", lineage: "aws" });
+    assert.equal(res.ok, false, name);
+    if (!res.ok) assert.equal(res.error, "هذا الاسم محمول في الوادي.", name);
+  }
+  const marked = await engine.foundTribe("u-n4-marked", { name: "محمّد", sheikh: "قيس", trait: "guard", lineage: "aws" });
+  assert.equal(marked.ok, false);
+  if (!marked.ok) assert.match(marked.error, /أسماء مقدسة/, "refused (the names.test N4 test shows it is the blocklist, not the symbols check)");
+});

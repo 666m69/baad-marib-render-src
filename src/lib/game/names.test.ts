@@ -182,3 +182,34 @@ test("#17: the map's battle caption puts «بنو» in the genitive (MapView «�
   assert.match(view, /clashCaption\(caption\.attacker, caption\.defender\)/);
   assert.doesNotMatch(view, /\{caption\.attacker\} على \{caption\.defender\}/);
 });
+
+// ---- QA N4 (MZ follow-up): «بني» = «بنو», diacritics before the symbols check, display names ----
+
+test("N4: «بني» normalizes like «بنو», so «بني أحمد» is blocked and «بني السراب» is the same name as «بنو السراب»", () => {
+  assert.equal(normalizeName("بني السراب"), normalizeName("بنو السراب"));
+  assert.equal(normalizeName("بنى السراب"), normalizeName("بنو السراب"), "alef maqsura spelling");
+  for (const name of ["بني أحمد", "بنو أحمد", "بني مكة", "بني الكعبة", "بني محمد"]) {
+    assert.equal(blockedName(name), true, name);
+    assert.equal(cleanName(name), null, name);
+  }
+  for (const name of ["بني هلال", "بني تميم", "بنو تميم"]) assert.equal(cleanName(name), name, name);
+});
+
+test("N4: diacritics are stripped before the symbols check: «محمّد» is a blocked name, not a symbols error", () => {
+  for (const name of ["محمّد", "مُحَمَّد", "أَحْمَد", "الكَعْبَة", "سُبْحَانَ اللَّه", "اللّٰه"]) {
+    assert.equal(blockedName(name.replace(/[\u064B-\u065F\u0670]/g, "")), true, name);
+    assert.equal(cleanName(name), null, name);
+  }
+  // Honest names with tashkeel are now accepted (stored without the marks), not refused as symbols.
+  assert.equal(cleanName("خالِد"), "خالد");
+  assert.equal(cleanName("بنو السرابَ"), "بنو السراب");
+  assert.equal(cleanName("حِمْيَر"), "حمير");
+  assert.equal(cleanName("ـــَـــ"), null, "only tatweel and a mark: still under 2 letters");
+  assert.equal(cleanName("بنو<السراب"), null, "real symbols are still refused");
+});
+
+test("N4: the account display name goes through the same blocklist", async () => {
+  const { blockedDisplayName } = await import("./names");
+  for (const name of ["محمّد", "الكعبة", "Allah", "سبحانالله", "Admin", "بني أحمد", "Mecca\u202E"]) assert.equal(blockedDisplayName(name), true, name);
+  for (const name of ["شيخ", "Marwan A.", "عبدالله", "خالد بن سعيد", "", undefined]) assert.equal(blockedDisplayName(name), false, String(name));
+});
