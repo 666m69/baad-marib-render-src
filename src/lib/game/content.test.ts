@@ -93,3 +93,22 @@ test("the scrub migration names the Companions only to replace them", () => {
   }
   for (const name of COMPANIONS.slice(2)) assert.ok(!text.includes(name), name);
 });
+
+test("no lone «لبيد» among sheikh names, and no lineage edge hints at a sanctuary (QA #18, #19)", () => {
+  assert.equal(SHEIKH_NAMES.includes("لبيد"), false);
+  const balance = readFileSync(join(ROOT, "src/lib/game/balance.ts"), "utf8");
+  const engine = readFileSync(join(ROOT, "src/lib/game/engine.server.ts"), "utf8");
+  assert.doesNotMatch(balance + engine, /sacred|دنّس/);
+  assert.equal(LINEAGE.khuzaa.edge, "haven");
+});
+
+test("tribe names after a preposition take the genitive: «نصر على بني …» (QA #17)", async () => {
+  const { genitive } = await import("./names");
+  assert.equal(`نصر على ${genitive("بنو السراب")}`, "نصر على بني السراب");
+  assert.equal(genitive("أبو الحسن"), "أبي الحسن");
+  assert.equal(genitive("ذو يزن"), "ذي يزن");
+  assert.equal(genitive("كندة"), "كندة");
+  assert.equal(genitive("بنوالسراب"), "بنوالسراب");
+  const engine = readFileSync(join(ROOT, "src/lib/game/engine.server.ts"), "utf8");
+  assert.doesNotMatch(engine, /(على|أمام|من|مع) \$\{(label|defName|publicName|attackerName|String\(tribe\.name\))\}/);
+});

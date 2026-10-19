@@ -25,7 +25,7 @@ function call(path: string, body: unknown, headers: Record<string, string>) {
     body: JSON.stringify(body),
   });
   // Same wrapper the /api/auth/$ route uses.
-  return auth.handler(withClientIp(request));
+  return withClientIp(request).then((r) => auth.handler(r));
 }
 
 const signUp = (email: string, ip: string) =>
@@ -88,4 +88,34 @@ test("sign-up is limited to 5 accounts an hour per client IP", async () => {
   for (let i = 0; i < 6; i++) statuses.push((await signUp(`p${i}@baad-marib.test`, "198.51.100.30")).status);
   assert.deepEqual(statuses.slice(0, 5), [200, 200, 200, 200, 200]);
   assert.equal(statuses[5], 429);
+});
+
+test("a wrong password says so, instead of claiming the password is too short (QA #8)", async () => {
+  const { arabicAuthError } = await import("./auth-errors");
+  await signUp("rightpass@baad-marib.test", "198.51.100.50");
+  const res = await call(
+    "/sign-in/email",
+    { email: "rightpass@baad-marib.test", password: "a-long-but-wrong-password" },
+    { "cf-connecting-ip": "198.51.100.51" },
+  );
+  assert.equal(res.status, 401);
+  const body = (await res.json()) as { code?: string; message?: string };
+  const text = arabicAuthError({ ...body, status: res.status });
+  assert.equal(text, "البريد أو كلمة السر غير صحيحة.");
+  assert.doesNotMatch(text, /قصيرة/);
+  const short = await call("/sign-up/email", { email: "s@baad-marib.test", password: "short", name: "x" }, { "cf-connecting-ip": "198.51.100.52" });
+  assert.equal(arabicAuthError({ ...((await short.json()) as object), status: short.status }), "كلمة السر قصيرة. ثمانية أحرف على الأقل.");
+  assert.equal(arabicAuthError({ status: 429 }), "محاولات كثيرة. انتظر دقيقة ثم حاول.");
+});
+
+test("after sign-out, replaying ALL the old cookies is no longer a session (QA #6)", async () => {
+  const up = await signUp("leaver@baad-marib.test", "198.51.100.60");
+  assert.equal(up.status, 200);
+  const jar = up.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+  assert.match(jar, /session_token=/);
+  const session = () => auth.api.getSession({ headers: new Headers({ cookie: jar }) });
+  assert.ok((await session())?.user, "signed in before sign-out");
+  const out = await call("/sign-out", {}, { cookie: jar, "cf-connecting-ip": "198.51.100.60" });
+  assert.equal(out.status, 200);
+  assert.equal(await session(), null, "the old cookies must not work after sign-out");
 });

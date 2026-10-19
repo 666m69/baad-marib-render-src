@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { THREAT_RANGE, WORLD, chebyshev } from "@/lib/game/balance";
+import { genitive } from "@/lib/game/names";
+import { clampCamera } from "@/lib/game/camera";
 import { fmtRemain } from "@/lib/game/format";
 import { terrainAt } from "@/lib/game/terrain";
 import type { PublicClash, PublicMarch, WorldSnapshot } from "@/lib/game/types";
@@ -62,11 +64,16 @@ export function MapView({
   useEffect(() => {
     if (!you || centered.current || box.w < 20) return;
     centered.current = true;
-    setCam({
-      x: you.x - box.w / cell / 2 + 0.5,
-      y: you.y - box.h / cell / 2 + 0.5,
-    });
+    setCam(clampCamera(you.x - box.w / cell / 2 + 0.5, you.y - box.h / cell / 2 + 0.5, box.w / cell, box.h / cell, WORLD));
   }, [you, box.w, box.h, cell]);
+
+  // Zooming or resizing must not reveal space past the valley's edge either.
+  useEffect(() => {
+    setCam((c) => {
+      const next = clampCamera(c.x, c.y, box.w / cell, box.h / cell, WORLD);
+      return next.x === c.x && next.y === c.y ? c : next;
+    });
+  }, [cell, box.w, box.h]);
 
   const cols = Math.ceil(box.w / cell) + 2;
   const rows = Math.ceil(box.h / cell) + 2;
@@ -82,17 +89,11 @@ export function MapView({
 
   function recenter() {
     if (!you) return;
-    setCam({
-      x: you.x - box.w / cell / 2 + 0.5,
-      y: you.y - box.h / cell / 2 + 0.5,
-    });
+    setCam(clampCamera(you.x - box.w / cell / 2 + 0.5, you.y - box.h / cell / 2 + 0.5, box.w / cell, box.h / cell, WORLD));
   }
 
   function focusAt(x: number, y: number) {
-    setCam({
-      x: x - box.w / cell / 2 + 0.5,
-      y: y - box.h / cell / 2 + 0.5,
-    });
+    setCam(clampCamera(x - box.w / cell / 2 + 0.5, y - box.h / cell / 2 + 0.5, box.w / cell, box.h / cell, WORLD));
     onSelect(x, y);
   }
 
@@ -129,7 +130,7 @@ export function MapView({
   for (const clash of world.clashes ?? []) {
     marks.set(`${clash.x}:${clash.y}`, {
       kind: "clash",
-      label: `معركة: ${clash.attacker} على ${clash.defender}`,
+      label: `معركة: ${clash.attacker} على ${genitive(clash.defender)}`,
     });
   }
   const latestClash = (world.clashes ?? [])[0] ?? null;
@@ -177,10 +178,9 @@ export function MapView({
         const dx = e.clientX - d.sx;
         const dy = e.clientY - d.sy;
         if (Math.hypot(dx, dy) > 6) d.moved = true;
-        setCam({
-          x: clamp(d.cx - dx / cellRef.current, -1, WORLD - 2),
-          y: clamp(d.cy - dy / cellRef.current, -1, WORLD - 2),
-        });
+        const el = frame.current;
+        const size = cellRef.current;
+        setCam(clampCamera(d.cx - dx / size, d.cy - dy / size, (el?.clientWidth ?? 0) / size, (el?.clientHeight ?? 0) / size, WORLD));
       }}
       onPointerUp={(e) => {
         pointers.current.delete(e.pointerId);

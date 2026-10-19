@@ -19,7 +19,7 @@ export const dbSource: DbSource = databaseUrl ? "neon" : "pglite";
 
 /**
  * Tests only: `PGLITE_MEMORY=1` opens a throwaway in-memory PGLite and reads
- * migrations from disk, so engine tests never touch `/workspace/.data`.
+ * migrations from disk, so engine tests never touch `.data/`.
  */
 const memoryDb =
   typeof process !== "undefined" && process.env.PGLITE_MEMORY === "1" && !databaseUrl;
@@ -77,8 +77,10 @@ const OID_DATE = 1082;
 const OID_INTERVAL = 1186;
 const identity = (v: string) => v;
 
-const VALLEY_DIR = "/workspace/.data/pglite";
-const VALLEY_TAR = "/workspace/.data/valley.tar";
+/** Local data lives in the project's own `.data/` (git-ignored), or PGLITE_DIR. */
+const DATA_DIR = (typeof process !== "undefined" && process.env.PGLITE_DIR?.trim()) || `${process.cwd()}/.data`;
+const VALLEY_DIR = `${DATA_DIR}/pglite`;
+const VALLEY_TAR = `${DATA_DIR}/valley.tar`;
 
 /** Copy a still-in-memory valley to disk once, before the next restart opens the file. */
 async function snapshotValley(pg: import("@electric-sql/pglite").PGlite) {
@@ -87,7 +89,7 @@ async function snapshotValley(pg: import("@electric-sql/pglite").PGlite) {
   const dump = await pg.dumpDataDir();
   const bytes = new Uint8Array(await dump.arrayBuffer());
   if (bytes.byteLength < 64) return;
-  mkdirSync("/workspace/.data", { recursive: true });
+  mkdirSync(DATA_DIR, { recursive: true });
   writeFileSync(VALLEY_TAR, bytes);
   console.log(`[db] valley snapshot ${bytes.byteLength} bytes`);
 }
@@ -100,7 +102,7 @@ async function openValley() {
     [OID_INTERVAL]: identity,
   };
   if (memoryDb) return new PGlite({ parsers });
-  mkdirSync("/workspace/.data", { recursive: true });
+  mkdirSync(DATA_DIR, { recursive: true });
   if (!existsSync(`${VALLEY_DIR}/PG_VERSION`) && existsSync(VALLEY_TAR)) {
     const tar = readFileSync(VALLEY_TAR);
     return new PGlite(VALLEY_DIR, { parsers, loadDataDir: new Blob([tar]) });

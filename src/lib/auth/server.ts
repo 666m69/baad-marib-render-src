@@ -43,7 +43,9 @@ export const auth = betterAuth({
   // Email is not verified yet (P2). The steward check in steward.ts requires
   // emailVerified = true, which DevOps sets by hand for the owner.
   account: { accountLinking: { enabled: false } },
-  session: { cookieCache: { enabled: true, maxAge: 300 } },
+  // No cookie cache: every check reads the session row, so sign-out takes
+  // effect at once (QA #6: a replayed session_data cookie stayed valid 5 min).
+  session: { cookieCache: { enabled: false } },
   rateLimit: AUTH_RATE_LIMIT,
   advanced: {
     ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] },

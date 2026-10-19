@@ -52,6 +52,21 @@ test("0015 clamps stock above the new caps (gold to بيت المال, goods to 
   assert.deepEqual({ ...(await get("poor")) }, { gold: 100, water: 50, food: 10 });
   await pg.exec(readFileSync(DIR + "0015_clamp_caps.sql", "utf8"));
   assert.equal((await get("rich"))?.gold, goldCap(1));
+  // QA #13: nothing is lost silently. Every cut is logged once, and the documented line restores it.
+  const log = await pg.query<{ user_id: string; good: string; removed: number }>(
+    `select user_id, good, removed from cap_clamp_log order by user_id, good`,
+  );
+  assert.deepEqual(log.rows.map((r) => ({ ...r })), [
+    { user_id: "big", good: "gold", removed: 15000 - goldCap(8) },
+    { user_id: "rich", good: "gold", removed: 9000 - goldCap(1) },
+    { user_id: "rich", good: "water", removed: 99999 - storageCap(0) },
+  ]);
+  const doc = readFileSync(new URL("../../../docs/deploy.md", import.meta.url), "utf8");
+  const rollback = /<!-- rollback-0015-sql -->\s*```sql\n(.+)\n```/.exec(doc)?.[1];
+  assert.ok(rollback, "docs/deploy.md must carry the 0015 rollback line");
+  await pg.exec(rollback);
+  assert.deepEqual({ ...(await get("rich")) }, { gold: 9000, water: 99999, food: 10 });
+  assert.deepEqual({ ...(await get("big")) }, { gold: 15000, water: 17000, food: 10 });
   await pg.close();
 });
 
@@ -83,5 +98,22 @@ test("0016 adds the resource banks and the valley tick stamp", async () => {
   );
   const names = cols.rows.map((r) => r.column_name);
   for (const c of ["water_bank", "food_bank", "gold_bank", "wood_bank", "stone_bank", "last_tick"]) assert.ok(names.includes(c), c);
+  await pg.close();
+});
+
+test("0019 renames a stored «لبيد» sheikh and fixes «على بنو» in old reports", async () => {
+  const pg = new PGlite();
+  const files = readdirSync(DIR).filter((f) => f.endsWith(".sql")).sort();
+  for (const f of files.filter((f) => f < "0019")) await pg.exec(readFileSync(DIR + f, "utf8"));
+  await pg.query(`insert into tribes (user_id, name, x, y, water, food, gold, wood, stone, people, sheikh_name) values ('a', 'بنو السراب', 0, 0, 0, 0, 0, 0, 0, 0, 'لبيد'), ('b', 'كندة', 1, 1, 0, 0, 0, 0, 0, 0, 'قيس')`);
+  await pg.query(`insert into reports (user_id, kind, title, body) values ('a', 'battle', 'نصر على بنو السراب', 'هجوم على بنو السراب. بنو السراب خسروا.'), ('b', 'battle', 'هزيمة أمام بنو الرمل', 'بنو الرمل')`);
+  await pg.exec(readFileSync(DIR + "0019_names_grammar.sql", "utf8"));
+  const t = await pg.query<{ sheikh_name: string }>(`select sheikh_name from tribes order by user_id`);
+  assert.deepEqual(t.rows.map((r) => r.sheikh_name), ["مهلهل", "قيس"]);
+  const r = await pg.query<{ title: string; body: string }>(`select title, body from reports order by user_id`);
+  assert.deepEqual(r.rows.map((x) => ({ ...x })), [
+    { title: "نصر على بني السراب", body: "هجوم على بني السراب. بنو السراب خسروا." },
+    { title: "هزيمة أمام بني الرمل", body: "بنو الرمل" },
+  ]);
   await pg.close();
 });

@@ -42,6 +42,19 @@ update "user" set "emailVerified" = true where lower(email) = lower('OWNER_EMAIL
 - IP العميل: `CF-Connecting-IP` (يضعه Cloudflare أمام Render)، وإلا الخانة التي أضافها
   آخر proxy في `X-Forwarded-For` (`TRUST_PROXY_HOPS`، الافتراضي 1). لا نثق أبداً بأول خانة.
 
+## قبل أول ترحيل على قاعدة فيها لاعبون
+
+خذ نسخة: `pg_dump "$DATABASE_URL" > before-migrate.sql` (أو branch في Neon). ما فيه down migrations.
+
+### Rollback 0015
+
+0015 تقصّ ما فوق السقوف الجديدة، وتسجّل كل ما قصّته في `cap_clamp_log` أولاً. للإرجاع:
+
+<!-- rollback-0015-sql -->
+```sql
+update tribes t set gold = gold + coalesce((select sum(removed) from cap_clamp_log l where l.user_id = t.user_id and l.good = 'gold'), 0), water = water + coalesce((select sum(removed) from cap_clamp_log l where l.user_id = t.user_id and l.good = 'water'), 0), food = food + coalesce((select sum(removed) from cap_clamp_log l where l.user_id = t.user_id and l.good = 'food'), 0), wood = wood + coalesce((select sum(removed) from cap_clamp_log l where l.user_id = t.user_id and l.good = 'wood'), 0), stone = stone + coalesce((select sum(removed) from cap_clamp_log l where l.user_id = t.user_id and l.good = 'stone'), 0);
+```
+
 ## Nitro
 
 `nitro` مثبّت على نسخة بعينها (`3.0.260610-beta`) دون `^`، و`.npmrc` فيه `save-exact=true`.

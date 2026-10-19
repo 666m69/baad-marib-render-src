@@ -83,3 +83,11 @@ export function cleanName(raw: string) {
   if (blockedName(name)) return null;
   return name;
 }
+
+/**
+ * A tribe name after a preposition (على، أمام، من، مع…): the leading
+ * «بنو / أبو / ذو» takes the genitive, so «نصر على بني السراب», not «على بنو».
+ */
+export function genitive(name: string) {
+  return name.replace(/^(بنو|أبو|ذو)(?=\s)/, (w) => ({ بنو: "بني", أبو: "أبي", ذو: "ذي" })[w] ?? w);
+}

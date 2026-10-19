@@ -1,6 +1,6 @@
 /**
  * Engine tests on a throwaway in-memory PGLite (PGLITE_MEMORY=1): real SQL,
- * real migrations, nothing written to /workspace/.data.
+ * real migrations, nothing written to .data/.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -184,4 +184,72 @@ test("founding refuses profane or staff-posing names, for the tribe and the shei
   assert.equal(badSheikh.ok, false);
   assert.equal(await row("u-bad"), undefined);
   await found("u-good", "خولان");
+});
+
+test("two players polling every 5 s for one simulated minute earn a full minute of production (QA S1 #1)", async () => {
+  await found("u-poll-a", "بنو الرمل");
+  await found("u-poll-b", "بنو الحصى");
+  const s = await sql();
+  const goods = ["water", "food", "gold", "wood", "stone"] as const;
+  const ids = ["u-poll-a", "u-poll-b"];
+  const milli = (r: Record<string, unknown>, g: string) => Number(r[g]) * balance.BANK_SCALE + Number(r[`${g}_bank`]);
+  await s`update tribes set last_tick = now() where user_id in ('u-poll-a', 'u-poll-b')`;
+  const before = new Map(await Promise.all(ids.map(async (id) => [id, await row(id)] as const)));
+  const started = Date.now();
+  for (let step = 0; step < 12; step++) {
+    // Five seconds pass...
+    await s`update tribes set last_tick = last_tick - interval '5 seconds' where user_id in ('u-poll-a', 'u-poll-b')`;
+    await dueTick();
+    // ...both players poll (the second read is throttled, as in production), and
+    // A reads again a few milliseconds later: the pattern that used to reset the
+    // fraction and leave production at zero.
+    await engine.loadWorld("u-poll-a");
+    await engine.loadWorld("u-poll-b");
+    await dueTick();
+    await engine.loadWorld("u-poll-a");
+  }
+  const wallSec = (Date.now() - started) / 1000;
+  for (const id of ids) {
+    const world = await engine.loadWorld(id);
+    assert.ok(world.you, id);
+    const rates = world.you.rates as unknown as Record<string, number>;
+    const now = await row(id);
+    for (const g of goods) {
+      const got = (milli(now, g) - milli(before.get(id)!, g)) / balance.BANK_SCALE;
+      const minute = rates[g];
+      assert.ok(minute > 0, `${id} ${g} rate`);
+      // At least a full minute (less rounding), at most a minute plus the real time the test took.
+      assert.ok(got >= minute - 0.1, `${id} ${g}: got ${got}, a minute is ${minute}`);
+      assert.ok(got <= (minute * (60 + wallSec + 1)) / 60, `${id} ${g}: got ${got}, a minute is ${minute}`);
+    }
+  }
+});
+
+test("a look-alike of a taken tribe name is refused: hidden marks, tatweel, spacing, alef forms (QA #10)", async () => {
+  await found("u-sarab", "بنو السراب");
+  for (const copy of ["بنو\u202Eالسراب", "بنوالسراب", "بنـو السـراب", "بَنُو السَّرَاب", "بنو  السراب"]) {
+    const res = await engine.foundTribe("u-copy", { name: copy, sheikh: "سيف", trait: "guard", lineage: "aws" });
+    assert.equal(res.ok, false, copy);
+  }
+  await found("u-alef", "آل ناعط");
+  const res = await engine.foundTribe("u-copy", { name: "ال ناعط", sheikh: "سيف", trait: "guard", lineage: "aws" });
+  assert.equal(res.ok, false);
+  assert.equal(await row("u-copy"), undefined);
+});
+
+test("a battle report against «بنو …» reads «نصر على بني …» / «هزيمة أمام بني …» (QA #17)", async () => {
+  await found("u-gram-a", "كهلان");
+  await found("u-gram-b", "بنو العقيق");
+  const s = await sql();
+  await s`update tribes set peace_until = null, infantry = 200, cavalry = 50 where user_id = 'u-gram-a'`;
+  await s`update tribes set peace_until = null where user_id = 'u-gram-b'`;
+  const res = await engine.attack("u-gram-a", { targetKind: "player", targetId: "u-gram-b", infantry: 200, cavalry: 50 } as never);
+  assert.ok(res.ok, res.ok ? "" : res.error);
+  await s`update marches set arrive_at = now() - interval '1 second' where attacker_id = 'u-gram-a'`;
+  await dueTick();
+  await engine.loadWorld("u-gram-a");
+  const reports = await s`select title, body from reports where user_id = 'u-gram-a' and kind <> 'found'`;
+  const text = reports.map((r) => `${r.title} ${r.body}`).join("\n");
+  assert.match(text, /(على|أمام) بني العقيق/, text);
+  assert.doesNotMatch(text, /(على|أمام|من|مع) بنو العقيق/, text);
 });

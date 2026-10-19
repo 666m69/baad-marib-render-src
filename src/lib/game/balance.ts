@@ -671,7 +671,7 @@ export const SUGGESTED_NAMES = ["كنانة", "الأزد", "همدان", "طي�
 export const SHEIKH_TRAITS = ["guard", "water", "rider", "raid"] as const;
 export type SheikhTrait = (typeof SHEIKH_TRAITS)[number];
 
-export const SHEIKH_NAMES = ["حارث", "قيس", "أوس", "زيد", "لبيد", "عامر", "سعد", "مالك"];
+export const SHEIKH_NAMES = ["حارث", "قيس", "أوس", "زيد", "مهلهل", "عامر", "سعد", "مالك"];
 
 export const TRAITS: Record<SheikhTrait, { label: string; blurb: string }> = {
   guard: { label: "حارس", blurb: "دفاع المضارب يثقل كلما علا صيت الشيخ." },
@@ -711,7 +711,7 @@ export const LINEAGE: Record<
     poetNote: string;
     blurb: string;
     gift: string;
-    edge: "water" | "market" | "build" | "pasture" | "sacred";
+    edge: "water" | "market" | "build" | "pasture" | "haven";
     trait: SheikhTrait;
   }
 > = {
@@ -762,7 +762,7 @@ export const LINEAGE: Record<
     poetNote: "شخصية متخيَّلة",
     blurb: "أهل تهامة، وحمى لا يُداس مجاناً.",
     gift: "دفاع المضارب أثقل، ومن يُسكت مرعاهم يخسر صيتاً.",
-    edge: "sacred",
+    edge: "haven",
     trait: "guard",
   },
 };
@@ -785,7 +785,7 @@ export function playedTrait(lineage: unknown, stored: SheikhTrait): SheikhTrait 
   const line = lineageBy(lineage);
   if (!line) return stored;
   if (line.edge === "water") return "water";
-  if (line.edge === "sacred") return "guard";
+  if (line.edge === "haven") return "guard";
   return null;
 }
 

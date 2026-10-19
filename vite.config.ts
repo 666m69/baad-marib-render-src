@@ -7,6 +7,7 @@ import viteReact from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { nitro } from "nitro/vite";
 import { isMigrationFile } from "./scripts/migration-plan.mjs";
+import { SECURITY_HEADERS } from "./src/lib/security-headers";
 
 /** The files `src/lib/db.ts` globs — same directory, same non-recursive scope. */
 function hasGlobbedMigrations(root: string): boolean {
@@ -69,6 +70,7 @@ export default defineConfig(({ command, isPreview }) => ({
           nitro({
             // Render runs `node .output/server/index.mjs` (render.yaml).
             preset: process.env.NITRO_PRESET || "node-server",
+            routeRules: { "/**": { headers: SECURITY_HEADERS } },
           }),
         ]
       : []),

@@ -29,11 +29,17 @@ export function resolveClientIp(headers: Headers, hops = 1): string | null {
   return pick && isIp(pick) ? pick : null;
 }
 
-/** A copy of `request` whose CLIENT_IP_HEADER is set by us, never by the client. */
-export function withClientIp(request: Request, hops = 1): Request {
+/**
+ * A copy of `request` whose CLIENT_IP_HEADER is set by us, never by the client.
+ * Built field by field: in production the incoming request is the server's own
+ * Request-like object, which `new Request(request, init)` cannot clone.
+ */
+export async function withClientIp(request: Request, hops = 1): Promise<Request> {
   const headers = new Headers(request.headers);
   headers.delete(CLIENT_IP_HEADER);
   const ip = resolveClientIp(request.headers, hops);
   if (ip) headers.set(CLIENT_IP_HEADER, ip);
-  return new Request(request, { headers });
+  const method = request.method.toUpperCase();
+  const body = method === "GET" || method === "HEAD" ? undefined : await request.arrayBuffer();
+  return new Request(request.url, { method, headers, body, redirect: request.redirect });
 }

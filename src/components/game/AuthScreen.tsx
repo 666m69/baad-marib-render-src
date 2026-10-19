@@ -3,17 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { authClient } from "@/lib/auth/client";
 import { Btn, Field, inputClass } from "./ui";
 import { ValleyMark } from "./Mark";
-
-function arabicAuthError(message: string) {
-  const m = message.toLowerCase();
-  if (m.includes("already") || m.includes("exist"))
-    return "هذا البريد مسجّل. ادخل بدل التسجيل.";
-  if (m.includes("password")) return "كلمة السر قصيرة. ثمانية أحرف على الأقل.";
-  if (m.includes("email") || m.includes("invalid"))
-    return "تحقق من البريد وكلمة السر.";
-  if (m.includes("origin")) return "تعذّر الدخول من هذا العنوان.";
-  return "تعذّر الدخول. حاول مرة أخرى.";
-}
+import { arabicAuthError } from "@/lib/game/auth-errors";
 
 export function AuthScreen() {
   const navigate = useNavigate();
@@ -37,7 +27,7 @@ export function AuthScreen() {
           callbackURL: "/",
         });
         if (err) {
-          setError(arabicAuthError(err.message ?? ""));
+          setError(arabicAuthError(err));
           return;
         }
       } else {
@@ -47,7 +37,7 @@ export function AuthScreen() {
           callbackURL: "/",
         });
         if (err) {
-          setError(arabicAuthError(err.message ?? ""));
+          setError(arabicAuthError(err));
           return;
         }
       }

@@ -343,8 +343,8 @@ function Top({
   const peace = you?.peaceUntil && now ? you.peaceUntil - now : 0;
   return (
     <header className="border-b border-line bg-surface">
-      <div className="flex items-center gap-2 px-3 py-1.5">
-        <button type="button" onClick={onAbout} className="flex min-w-0 items-center gap-2 text-start">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-1.5" data-testid="game-header">
+        <button type="button" onClick={onAbout} className="flex min-w-0 flex-1 basis-40 items-center gap-2 text-start">
           <ValleyMark size={28} />
           <span className="min-w-0">
             <span className="block truncate font-display text-xl leading-none">{you?.name ?? "بعد مأرب"}</span>
@@ -356,29 +356,29 @@ function Top({
           </span>
         </button>
         {world.clock && (
-          <span className="shrink-0 rounded-full bg-surface-2 px-2 py-1 text-[11px] text-faint">
+          <span className="order-last shrink-0 rounded-full bg-surface-2 px-2 py-1 text-[11px] text-faint sm:order-none">
             {world.clock.night ? "ليل" : "نهار"}
             {now ? ` ${fmtRemain(Math.max(0, world.clock.until - now))}` : ""}
           </span>
         )}
         {peace > 0 && (
-          <span className="shrink-0 rounded-full bg-accent/15 px-2 py-1 text-[11px] text-accent">درع {fmtRemain(peace)}</span>
+          <span className="order-last shrink-0 rounded-full bg-accent/15 px-2 py-1 text-[11px] text-accent sm:order-none">درع {fmtRemain(peace)}</span>
         )}
-        <span className="ms-auto" />
+        <span className="hidden sm:ms-auto sm:block" />
         <div className="flex shrink-0 items-center">
           {onCoach && (
-            <button type="button" onClick={onCoach} className="relative min-h-11 px-2 text-xs text-accent">
+            <button type="button" onClick={onCoach} className="relative inline-flex min-h-11 items-center px-2 text-xs text-accent">
               <span className="absolute top-2 start-1 size-1.5 rounded-full bg-accent task-dot" />
               المرشد
             </button>
           )}
           {desk?.steward && (
-            <Link to="/diwan" className="relative min-h-11 px-2 text-xs text-accent">
+            <Link to="/diwan" className="relative inline-flex min-h-11 items-center px-2 text-xs text-accent">
               الديوان
               {desk.pending > 0 ? ` ${desk.pending}` : ""}
             </Link>
           )}
-          <button type="button" onClick={onLetter} className="min-h-11 px-2 text-xs text-muted">
+          <button type="button" onClick={onLetter} className="inline-flex min-h-11 items-center px-2 text-xs text-muted">
             رسالة
           </button>
           <UserButton />
@@ -386,7 +386,7 @@ function Top({
       </div>
       {you && (
         <>
-          <div className="grid grid-cols-6 gap-px px-2">
+          <div className="grid grid-cols-6 gap-px px-1 sm:px-2" data-testid="resource-bar">
             <Chip icon={ICONS.water} label={RESOURCE_LABEL.water} value={you.water} rate={you.rates.water} cap={you.storageCap} raise="storehouse" onRaise={onRaise} />
             <Chip icon={ICONS.food} label={RESOURCE_LABEL.food} value={you.food} rate={you.rates.food} cap={you.storageCap} raise="storehouse" onRaise={onRaise} />
             <Chip icon={ICONS.gold} label={RESOURCE_LABEL.gold} value={you.gold} rate={you.rates.gold} cap={you.goldCap} raise="tent" onRaise={onRaise} />
@@ -423,14 +423,15 @@ function Chip({
   const state = cap != null ? capState(value, cap) : "ok";
   const raiseLabel = raise === "tent" ? "ارفع الخيمة" : "ارفع المخزن";
   return (
-    <div className="flex min-w-0 flex-col items-center gap-0.5 py-1 text-center" aria-label={label} data-cap-state={state}>
+    <div className="flex min-w-0 flex-col items-center gap-0.5 overflow-hidden py-1 text-center" aria-label={label} data-cap-state={state}>
       <Icon size={14} aria-hidden="true" className="text-muted" />
-      <p className={`tabular-nums text-[13px] leading-none ${state === "warn" ? "text-accent" : state === "full" ? "text-danger" : ""}`}>
-        {fmt(value)}
+      {/* Value and cap on separate lines below `sm`, so «3,000/3,000» never runs into the next chip at 390px. */}
+      <p dir="ltr" className={`flex max-w-full flex-col items-center whitespace-nowrap tabular-nums text-[13px] leading-none sm:flex-row ${state === "warn" ? "text-accent" : state === "full" ? "text-danger" : ""}`}>
+        <span>{fmt(value)}</span>
         {cap != null ? <span className="text-[10px] text-faint">/{fmt(cap)}</span> : null}
       </p>
       {state === "full" && raise && onRaise ? (
-        <button type="button" onClick={() => onRaise(raise)} className="h-4 text-[10px] leading-none text-danger underline">
+        <button type="button" onClick={() => onRaise(raise)} className="min-h-6 whitespace-nowrap px-0.5 text-[11px] leading-none text-danger underline">
           {raiseLabel}
         </button>
       ) : (

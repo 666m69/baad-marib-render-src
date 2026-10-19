@@ -143,7 +143,7 @@ function hashStr(s: string) {
   return h >>> 0;
 }
 
-import { cleanName } from "./names";
+import { cleanName, genitive, normalizeName } from "./names";
 
 export { cleanName };
 
@@ -971,7 +971,7 @@ async function finishSpoil(sql: Sql, march: Row, attackerId: string, attackerNam
     await sendHome(sql, march, infantry, cavalry, toX, toY);
     return;
   }
-  let sacred = false;
+  let haven = false;
   for (const ownerId of foreign) {
     const rows = await sql<Row>`select name, peace_until, lineage from tribes where user_id = ${ownerId}`;
     const peace = epoch(rows[0]?.peace_until);
@@ -981,10 +981,10 @@ async function finishSpoil(sql: Sql, march: Row, attackerId: string, attackerNam
       await sendHome(sql, march, infantry, cavalry, toX, toY);
       return;
     }
-    if (lineageBy(rows[0]?.lineage)?.edge === "sacred") sacred = true;
+    if (lineageBy(rows[0]?.lineage)?.edge === "haven") haven = true;
   }
   await sitOnPasture(sql, march, infantry, cavalry);
-  if (sacred) await sql`update tribes set renown = greatest(0, renown - 1) where user_id = ${attackerId}`;
+  if (haven) await sql`update tribes set renown = greatest(0, renown - 1) where user_id = ${attackerId}`;
   const base = pastureBase(toX, toY);
   const what = base.good ? `يسكت ${base.rate} في الدقيقة` : "درب بلا إنتاج";
   await writeReport(
@@ -992,7 +992,7 @@ async function finishSpoil(sql: Sql, march: Row, attackerId: string, attackerNam
     attackerId,
     "spoil",
     "وقفت على المرعى",
-    said(`قوتك واقفة على المربع ${SPOIL_HOLD_SEC} ثانية. ${what}. مواردهم لم تُنهب.${sacred ? " هذا حمى خزاعة، فنقص صيتك." : ""}`),
+    said(`قوتك واقفة على المربع ${SPOIL_HOLD_SEC} ثانية. ${what}. مواردهم لم تُنهب.${haven ? " هذا حمى خزاعة، فنقص صيتك." : ""}`),
     true,
   );
   for (const ownerId of foreign) {
@@ -1001,7 +1001,7 @@ async function finishSpoil(sql: Sql, march: Row, attackerId: string, attackerNam
       ownerId,
       "spoil",
       "دخيل على المرعى",
-      said(`${attackerName} يقف على مربع من سلسلتك. إنتاجه صامت حتى يُطهَّر أو يرحل.${sacred ? " الصيت الذي دنّس الحمى نقص." : ""}`),
+      said(`${attackerName} يقف على مربع من سلسلتك. إنتاجه صامت حتى يُطهَّر أو يرحل.${haven ? " الصيت الذي انتهك الحمى نقص." : ""}`),
       false,
     );
   }
@@ -1126,8 +1126,8 @@ async function resolveOne(sql: Sql, march: Row) {
       sql,
       attackerId,
       "attack",
-      battle.attackerWins ? `نصر على ${label}` : `هزيمة أمام ${label}`,
-      `المواجهة مع ${label}. قوّتك ${troopPhrase(infantry, cavalry)}، وخسائرك ${troopPhrase(battle.atkInfLoss, battle.atkCavLoss)}. ${
+      battle.attackerWins ? `نصر على ${genitive(label)}` : `هزيمة أمام ${genitive(label)}`,
+      `المواجهة مع ${genitive(label)}. قوّتك ${troopPhrase(infantry, cavalry)}، وخسائرك ${troopPhrase(battle.atkInfLoss, battle.atkCavLoss)}. ${
         lootText ? `الغنائم: ${lootText}.` : "لا غنائم."
       }${spill ? ` ${spill}` : ""} ${leftInf + leftCav > 0 ? "الناجون في طريق العودة." : "لم يعد أحد."}`,
       battle.attackerWins,
@@ -1181,7 +1181,7 @@ async function resolveOne(sql: Sql, march: Row) {
       sql,
       attackerId,
       "attack",
-      battle.attackerWins ? `نصر على ${label}` : `هزيمة أمام ${label}`,
+      battle.attackerWins ? `نصر على ${genitive(label)}` : `هزيمة أمام ${genitive(label)}`,
       `المواجهة مع الصعلوك ${label}. خسائرك ${troopPhrase(battle.atkInfLoss, battle.atkCavLoss)}. ${lootText ? `الغنائم: ${lootText}.` : "لا غنائم."}${spill ? ` ${spill}` : ""}`,
       battle.attackerWins,
     );
@@ -1224,7 +1224,7 @@ async function resolveOne(sql: Sql, march: Row) {
       defenderId,
       "peace",
       "ارتدّ طارق عن الحمى",
-      `اقتربت قوّة من ${publicName} ثم ارتدّت. الدرع ما زال قائماً.`,
+      `اقتربت قوّة من ${genitive(publicName)} ثم ارتدّت. الدرع ما زال قائماً.`,
       true,
     );
     await noteClash(sql, num(defender.x), num(defender.y), publicName, String(defender.name), false, "ارتدّت عن الدرع");
@@ -1286,8 +1286,8 @@ async function resolveOne(sql: Sql, march: Row) {
     sql,
     attackerId,
     "attack",
-    battle.attackerWins ? `نصر على ${defName}` : `هزيمة أمام ${defName}`,
-    `قال الراوي: هجوم على ${defName}. أرسلت ${troopPhrase(infantry, cavalry)}. خسائرك ${troopPhrase(battle.atkInfLoss, battle.atkCavLoss)}. خسائرهم ${troopPhrase(battle.defInfLoss, battle.defCavLoss)}. ${
+    battle.attackerWins ? `نصر على ${genitive(defName)}` : `هزيمة أمام ${genitive(defName)}`,
+    `قال الراوي: هجوم على ${genitive(defName)}. أرسلت ${troopPhrase(infantry, cavalry)}. خسائرك ${troopPhrase(battle.atkInfLoss, battle.atkCavLoss)}. خسائرهم ${troopPhrase(battle.defInfLoss, battle.defCavLoss)}. ${
       keptText ? `الغنائم: ${keptText}.` : "لم تُحمَل غنائم."
     }${spill ? ` ${spill}` : ""} ${leftInf + leftCav > 0 ? "الناجون يعودون." : "لم يعد أحد."}`,
     battle.attackerWins,
@@ -1873,8 +1873,11 @@ async function found(
     await ensureBuildings(sql, userId);
     return null;
   }
-  const taken = await sql<Row>`select user_id from tribes where lower(name) = lower(${name})`;
-  if (taken.length) return "هذا الاسم محمول في الوادي.";
+  // Compared folded (spacing, diacritics, tatweel, letter forms), so «بنو ـالسراب»
+  // cannot pass for «بنو السراب». Runs under the valley lock.
+  const nameKey = normalizeName(name);
+  const names = await sql<Row>`select name from tribes`;
+  if (names.some((row) => normalizeName(String(row.name)) === nameKey)) return "هذا الاسم محمول في الوادي.";
 
   const { blocked } = await blockedSet(sql);
   const camps = await sql<Row>`select x, y from tribes`;
@@ -2280,7 +2283,7 @@ async function finishScout(sql: Sql, march: Row, userId: string, attackerName: s
         wood: num(bandit.wood),
         stone: num(bandit.stone),
       })}.`;
-      title = `طليعة على ${label}`;
+      title = `طليعة على ${genitive(label)}`;
     }
   } else {
     const rows = await sql<Row>`select user_id, name, infantry, cavalry, peace_until from tribes where user_id = ${targetId}`;
@@ -2292,13 +2295,13 @@ async function finishScout(sql: Sql, march: Row, userId: string, attackerName: s
       const peace = epoch(tribe.peace_until);
       const shielded = peace != null && peace > Date.now();
       detail = `المشاة ${num(tribe.infantry)}، والفرسان ${num(tribe.cavalry)}. هجومهم ${armyPower(num(tribe.infantry), num(tribe.cavalry))}. دفاع المضارب ${power}. ${shielded ? "الدرع قائم." : "لا درع."}`;
-      title = `طليعة على ${String(tribe.name)}`;
+      title = `طليعة على ${genitive(String(tribe.name))}`;
       await writeReport(
         sql,
         targetId,
         "scout",
         `طليعة ${attackerName}`,
-        `طليعة من ${attackerName} أطلت على المضارب ثم عادت. لم يُشهر سلاح.`,
+        `طليعة من ${genitive(attackerName)} أطلت على المضارب ثم عادت. لم يُشهر سلاح.`,
         null,
       );
     }
