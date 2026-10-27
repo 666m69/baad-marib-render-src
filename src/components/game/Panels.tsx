@@ -1,6 +1,5 @@
 import { useState } from "react";
 import {
-  BUILDINGS,
   BARTER_GET,
   BARTER_GIVE,
   DEFERRED,
@@ -20,17 +19,18 @@ import {
   paceOf,
   peaceExtendCost,
   playedTrait,
+  poetLine,
   RESOURCE_LABEL,
   SCOUT_GOLD,
   TRAIN,
   armyPower,
+  attackDropsShield,
   defenseOf,
   barterTake,
   studyOpen,
   TRAITS,
   traitLine,
   trainQuote,
-  upgradeCost,
   type BuildingKind,
   type Good,
   type Lineage,
@@ -110,7 +110,7 @@ export function FoundPanel({
       <div>
         <p className="text-xs text-faint">القبيلة · {people.name}</p>
         <p className="mt-1 text-sm text-muted">
-          شاعرها {people.poet}. {people.blurb} {people.gift}
+          شاعرها {poetLine(people)}. {people.blurb} {people.gift}
         </p>
         <div className="mt-2 grid grid-cols-2 gap-2">
           {LINEAGES.map((key) => (
@@ -135,7 +135,17 @@ export function FoundPanel({
   );
 }
 
-export function CampPanel({ you, now, actions }: { you: YouState; now: number; actions: GameActions }) {
+export function CampPanel({
+  you,
+  now,
+  actions,
+  focus = null,
+}: {
+  you: YouState;
+  now: number;
+  actions: GameActions;
+  focus?: { kind: BuildingKind; at: number } | null;
+}) {
   const rank = rankOf(developScore(you));
   const peaceLeft = you.peaceUntil ? you.peaceUntil - now : 0;
   const peaceCost = peaceExtendCost(you.peaceExtends);
@@ -165,7 +175,7 @@ export function CampPanel({ you, now, actions }: { you: YouState; now: number; a
         {you.pacts > 0 && <p className="mt-1 text-xs text-faint">صعلوك مبايع. من المغرب إلى الفجر غارتك بلا اسم، والطليعة تبقى مكشوفة.</p>}
       </section>
 
-      <CampMap you={you} now={now} actions={actions} />
+      <CampMap you={you} now={now} actions={actions} focus={focus} />
 
       <OathBoard you={you} actions={actions} />
       <Market you={you} actions={actions} />
@@ -199,7 +209,7 @@ export function CampPanel({ you, now, actions }: { you: YouState; now: number; a
           <div>
             <h3 className="font-medium">درع المبتدئ</h3>
             <p className="text-sm text-faint">
-              {you.attacked ? "سقط لأنك شهرت السلاح" : peaceLeft > 0 ? `باقٍ ${fmtRemain(peaceLeft)}` : "ساقط"}
+              {you.attacked ? "سقط لأنك هاجمت قبيلة" : peaceLeft > 0 ? `باقٍ ${fmtRemain(peaceLeft)}` : "ساقط"}
             </p>
           </div>
           {!you.attacked && (
@@ -458,7 +468,7 @@ export function TileSheet({
         locked={false}
         you={you}
         dist={distance(you.x, you.y, bandit.x, bandit.y)}
-        warn={!you.attacked}
+        warn={!you.attacked && attackDropsShield("bandit")}
         busy={actions.busy}
         scouting={world.marches.some((march) => march.purpose === "scout" && march.role === "out")}
         onScout={() => actions.scout("bandit", String(bandit.id))}
@@ -480,7 +490,7 @@ export function TileSheet({
           <p className="mt-2 text-sm text-fg">
             {fmt(outlaw.cavalry)} فرسان · البيعة {fmt(outlaw.gold)} ذهب و{fmt(outlaw.food)} طعام
           </p>
-          <p className="mt-1 text-xs text-oasis">البيعة لا تُسقط الدرع، وتزيد صيت الشيخ. بعدها، من المغرب إلى الفجر، غارتك بلا اسم. القتال يُسقط الدرع.</p>
+          <p className="mt-1 text-xs text-oasis">البيعة لا تُسقط الدرع، وتزيد صيت الشيخ. بعدها، من المغرب إلى الفجر، غارتك بلا اسم. قتال الصعاليك والعصابات لا يُسقط الدرع، ومهاجمة مضارب قبيلة تُسقطه.</p>
           <Btn className="mt-3 w-full" disabled={actions.busy || goldShort || foodShort} onClick={() => actions.hire(outlaw.id)}>
             بايع الفرسان
           </Btn>
@@ -493,7 +503,7 @@ export function TileSheet({
           locked={false}
           you={you}
           dist={distance(you.x, you.y, outlaw.x, outlaw.y)}
-          warn={!you.attacked}
+          warn={!you.attacked && attackDropsShield("saalik")}
           busy={actions.busy}
           scouting={false}
           allowScout={false}
@@ -685,7 +695,7 @@ function AttackBox({
       {you.pacts > 0 && (
         <p className="mt-2 text-xs text-muted">في الليل تخرج هذه الغارة بلا اسم، وأصل السهم لا يراه سواك. الطليعة تبقى باسمك.</p>
       )}
-      {warn && <p className="mt-2 text-xs text-danger">الهجوم يُسقط درع المبتدئ. الطليعة لا تُسقطه.</p>}
+      {warn && <p className="mt-2 text-xs text-danger">مهاجمة مضارب قبيلة تُسقط درع المبتدئ. الطليعة لا تُسقطه.</p>}
       {locked && lockedNote && <p className="mt-2 text-xs text-muted">{lockedNote}</p>}
       <Btn className="mt-3 w-full" variant="danger" disabled={busy || locked || tooMany} onClick={() => onSend(infantry, cavalry)}>
         أرسل الهجوم
@@ -760,7 +770,7 @@ function Market({ you, actions }: { you: YouState; actions: GameActions }) {
   const giveN = used * BARTER_GIVE;
   const takeEach = you.lineage ? barterTake(you.lineage, 1) : BARTER_GET;
   const getN = used * takeEach;
-  const room = you.storageCap - you[take];
+  const room = (take === "gold" ? you.goldCap : you.storageCap) - you[take];
   const blocked = give === take || maxLots < 1 || giveN > have || getN > room;
   return (
     <section className="rounded-xl border border-line bg-surface p-4">

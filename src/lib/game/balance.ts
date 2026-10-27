@@ -2,7 +2,7 @@
 
 export const WORLD = 32;
 
-export const BUILDING_KINDS = ["tent", "well", "farm", "workshop", "barracks"] as const;
+export const BUILDING_KINDS = ["tent", "well", "farm", "workshop", "barracks", "storehouse"] as const;
 export type BuildingKind = (typeof BUILDING_KINDS)[number];
 
 export const TROOP_KINDS = ["infantry", "cavalry"] as const;
@@ -42,7 +42,7 @@ type BuildingDef = {
 export const BUILDINGS: Record<BuildingKind, BuildingDef> = {
   tent: {
     label: "خيمة الشيخ",
-    blurb: "مخزن المضارب. رفعها يزيد سعة كل مورد، والذهب، وحدّ السكان، والدفاع.",
+    blurb: "بيت المال وقلب المضارب. رفعها يزيد الذهب وسعة بيت المال، وحدّ السكان، والدفاع.",
     max: 8,
     wood: 160,
     stone: 130,
@@ -79,6 +79,16 @@ export const BUILDINGS: Record<BuildingKind, BuildingDef> = {
     gold: 20,
     food: 0,
     seconds: 22,
+  },
+  storehouse: {
+    label: "المخزن",
+    blurb: "بيت الحب والتمر والحطب والحجر. كل مستوى يزيد سعة الماء والطعام والخشب والحجر.",
+    max: 10,
+    wood: 90,
+    stone: 120,
+    gold: 0,
+    food: 0,
+    seconds: 20,
   },
   barracks: {
     label: "الثكنة",
@@ -280,8 +290,71 @@ export function fieldCost(good: FieldGood, nextLevel: number): Cost {
   };
 }
 
-export function storageCap(tentLevel: number) {
-  return 4500 + Math.max(1, tentLevel) * 1400;
+/** Base room for water, food, wood and stone before any storehouse is built. */
+export const STORE_BASE = 3000;
+/** Extra room per storehouse level (max level 10). */
+export const STORE_PER_LEVEL = 1500;
+/** Share of the cap at which the bar warns that the storehouse is nearly full. */
+export const STORE_WARN = 0.8;
+
+/** Cap for water, food, wood and stone. Only the storehouse raises it; the tent does not. */
+export function storageCap(storehouseLevel: number) {
+  const level = Math.max(0, Math.min(BUILDINGS.storehouse.max, Math.floor(storehouseLevel || 0)));
+  return STORE_BASE + level * STORE_PER_LEVEL;
+}
+
+/** Gold has its own cap, held in the sheikh's tent (بيت المال). */
+export function goldCap(tentLevel: number) {
+  return 2000 + Math.max(1, tentLevel) * 1000;
+}
+
+export type Caps = { water: number; food: number; gold: number; wood: number; stone: number };
+
+export function capsOf(levels: Pick<Record<BuildingKind, number>, "tent" | "storehouse">): Caps {
+  const goods = storageCap(levels.storehouse ?? 0);
+  return { water: goods, food: goods, gold: goldCap(levels.tent || 1), wood: goods, stone: goods };
+}
+
+export function emptyLevels(tent = 0): Record<BuildingKind, number> {
+  return { tent, well: 0, farm: 0, workshop: 0, barracks: 0, storehouse: 0 };
+}
+
+/**
+ * Fit an income into the room left under each cap. Anything over the cap is lost,
+ * never stored, and reported back so the report can say what spilled.
+ */
+export function fitIncome(stock: Stock, add: Stock, caps: Caps): { gain: Stock; lost: Stock } {
+  const gain: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
+  const lost: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
+  for (const key of ["water", "food", "gold", "wood", "stone"] as const) {
+    const want = Math.max(0, Math.floor(add[key] || 0));
+    const room = Math.max(0, caps[key] - Math.max(0, stock[key] || 0));
+    gain[key] = Math.min(want, room);
+    lost[key] = want - gain[key];
+  }
+  return { gain, lost };
+}
+
+/** Storehouse level an existing tribe needs so the new cap is never below its old tent cap. */
+export function storehouseForLegacyTent(tentLevel: number) {
+  const legacy = 4500 + Math.max(1, tentLevel) * 1400;
+  return Math.min(BUILDINGS.storehouse.max, Math.max(0, Math.ceil((legacy - STORE_BASE) / STORE_PER_LEVEL)));
+}
+
+/** Fill ratio and warning band for one resource bar. */
+export function capState(value: number, cap: number): "ok" | "warn" | "full" {
+  if (cap <= 0) return "full";
+  if (value >= cap) return "full";
+  if (value >= cap * STORE_WARN) return "warn";
+  return "ok";
+}
+
+/**
+ * Beginner shield rule: only a march on another player's camp drops the shield.
+ * Bandit camps and صعاليك are the beginner's training ground and never cost the shield.
+ */
+export function attackDropsShield(targetKind: string) {
+  return targetKind === "player";
 }
 
 export function peopleCap(tentLevel: number) {
@@ -519,6 +592,19 @@ export function resolveBattle(
 
 export type Stock = { water: number; food: number; gold: number; wood: number; stone: number };
 
+/** Report line for income lost to a full storehouse; empty when nothing spilled. */
+export function spillNote(lost: Stock) {
+  const bits: string[] = [];
+  if (lost.food) bits.push(`${lost.food} طعام`);
+  if (lost.wood) bits.push(`${lost.wood} خشب`);
+  if (lost.stone) bits.push(`${lost.stone} حجر`);
+  if (lost.water) bits.push(`${lost.water} ماء`);
+  const parts: string[] = [];
+  if (bits.length) parts.push(`${bits.join("، ")} لضيق المخزن`);
+  if (lost.gold) parts.push(`${lost.gold} ذهب لضيق بيت المال`);
+  return parts.length ? `ضاع من الغنيمة ${parts.join("، و")}.` : "";
+}
+
 export function takeLoot(stock: Stock, carry: number): Stock {
   const loot: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
   let room = Math.max(0, carry);
@@ -617,11 +703,23 @@ export type Lineage = (typeof LINEAGES)[number];
 
 export const LINEAGE: Record<
   Lineage,
-  { name: string; poet: string; blurb: string; gift: string; edge: "water" | "market" | "build" | "pasture" | "sacred"; trait: SheikhTrait }
+  {
+    name: string;
+    poet: string;
+    /** "jahili" = documented pre-Islamic poet (lineage, era and sources in docs/poets.md); "fictional" = invented character. */
+    poetKind: "jahili" | "fictional";
+    poetNote: string;
+    blurb: string;
+    gift: string;
+    edge: "water" | "market" | "build" | "pasture" | "sacred";
+    trait: SheikhTrait;
+  }
 > = {
   aws: {
     name: "الأوس",
-    poet: "حسان بن ثابت",
+    poet: "أحيحة بن الجلاح",
+    poetKind: "jahili",
+    poetNote: "سيد الأوس في الجاهلية",
     blurb: "أهل يثرب، سادة النخيل والماء.",
     gift: "ماء القبيلة يغزر كلما علا الصيت.",
     edge: "water",
@@ -630,6 +728,8 @@ export const LINEAGE: Record<
   ghassan: {
     name: "غسان",
     poet: "النابغة الذبياني",
+    poetKind: "jahili",
+    poetNote: "شاعر بلاطهم، ذبياني النسب",
     blurb: "ملوك الشام، وبابهم السوق.",
     gift: "البدل يعيد ٤ بدل ٣ في كل دفعة.",
     edge: "market",
@@ -637,7 +737,9 @@ export const LINEAGE: Record<
   },
   lakhm: {
     name: "لخم",
-    poet: "عدي بن زيد",
+    poet: "عدي بن زيد العبادي",
+    poetKind: "jahili",
+    poetNote: "شاعر بلاط الحيرة، تميمي النسب",
     blurb: "ملوك الحيرة، وحكمتهم في البناء.",
     gift: "وقت الرفع والتدريب والدراسة أقصر بخمس.",
     edge: "build",
@@ -645,7 +747,9 @@ export const LINEAGE: Record<
   },
   azd: {
     name: "أزد عمان",
-    poet: "مالك بن فهم",
+    poet: "راوي الأفلاج",
+    poetKind: "fictional",
+    poetNote: "شخصية متخيَّلة",
     blurb: "أهل الأفلاج، وغلة الحمى أغزر.",
     gift: "مراعي السلسلة أغزر بربع.",
     edge: "pasture",
@@ -653,13 +757,20 @@ export const LINEAGE: Record<
   },
   khuzaa: {
     name: "خزاعة",
-    poet: "كعب بن مالك",
-    blurb: "سدنة الحرم، وحمى لا يُداس مجاناً.",
+    poet: "حادي تهامة",
+    poetKind: "fictional",
+    poetNote: "شخصية متخيَّلة",
+    blurb: "أهل تهامة، وحمى لا يُداس مجاناً.",
     gift: "دفاع المضارب أثقل، ومن يُسكت مرعاهم يخسر صيتاً.",
     edge: "sacred",
     trait: "guard",
   },
 };
+
+/** "شاعرها X (note)" as shown to the player. */
+export function poetLine(line: { poet: string; poetNote: string }) {
+  return `${line.poet} (${line.poetNote})`;
+}
 
 export function isLineage(value: string): value is Lineage {
   return (LINEAGES as readonly string[]).includes(value);

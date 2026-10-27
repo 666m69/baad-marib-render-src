@@ -5,7 +5,7 @@ import { Droplets, Hammer, Map, ScrollText, Swords, TreePine, Mountain, Users, C
 import { UserButton } from "@/lib/auth/gates";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { barterGoods, claimGuide, claimOath, claimPasture, diwanGate, expandSanctuary, extendPeace, foundTribe, getWorld, hireSaalik, myLetter, readReports, releasePasture, relocate, sendAttack, sendLetter, sendScout, spoilPasture, startStudy, trainTroops, upgradeBuilding, upgradeField } from "@/lib/game/api";
-import { RESOURCE_LABEL, TRAITS, chebyshev, lineageBy, type Good, type OathKind } from "@/lib/game/balance";
+import { RESOURCE_LABEL, TRAITS, capState, chebyshev, lineageBy, type Good, type OathKind } from "@/lib/game/balance";
 import { coachLesson, type CoachLesson } from "@/lib/game/coach";
 import { fmt, fmtRemain, tribeCount } from "@/lib/game/format";
 import { thud, unlockAudio } from "@/lib/game/sfx";
@@ -54,6 +54,14 @@ function Authed({ userId }: { userId: string }) {
     refetchInterval: 8000,
   });
   const [tab, setTab] = useState<Tab>("map");
+  const [campFocus, setCampFocus] = useState<{ kind: BuildingKind; at: number } | null>(null);
+  useEffect(() => {
+    if (tab !== "camp") setCampFocus(null);
+  }, [tab]);
+  const raise = (kind: BuildingKind) => {
+    setCampFocus({ kind, at: Date.now() });
+    setTab("camp");
+  };
   const [selected, setSelected] = useState<{ x: number; y: number } | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -243,6 +251,7 @@ function Authed({ userId }: { userId: string }) {
         onAbout={() => setAbout(true)}
         onCoach={coachOn ? null : showCoach}
         onLetter={() => setLetterOn(true)}
+        onRaise={raise}
         desk={desk}
       />
       {coachOn && (
@@ -281,7 +290,7 @@ function Authed({ userId }: { userId: string }) {
                 <p className="p-4 text-sm text-muted">اختر موضعاً على الخريطة: مضارب، معسكر، أو رمل تنقل إليه.</p>
               )
             )}
-            {tab === "camp" && <CampPanel you={you} now={now} actions={actions} />}
+            {tab === "camp" && <CampPanel you={you} now={now} actions={actions} focus={campFocus} />}
             {tab === "army" && <ArmyPanel you={you} now={now} actions={actions} />}
             {tab === "reports" && <ReportsPanel world={world} />}
           </div>
@@ -313,6 +322,7 @@ function Top({
   onAbout,
   onCoach,
   onLetter,
+  onRaise,
   desk,
 }: {
   you: YouState | null;
@@ -321,6 +331,7 @@ function Top({
   onAbout: () => void;
   onCoach: (() => void) | null;
   onLetter: () => void;
+  onRaise?: (kind: BuildingKind) => void;
   desk?: { steward: boolean; claimOpen: boolean; pending: number };
 }) {
   const peace = you?.peaceUntil && now ? you.peaceUntil - now : 0;
@@ -370,14 +381,16 @@ function Top({
       {you && (
         <>
           <div className="grid grid-cols-6 gap-px px-2">
-            <Chip icon={ICONS.water} label={RESOURCE_LABEL.water} value={you.water} rate={you.rates.water} cap={you.storageCap} />
-            <Chip icon={ICONS.food} label={RESOURCE_LABEL.food} value={you.food} rate={you.rates.food} cap={you.storageCap} />
-            <Chip icon={ICONS.gold} label={RESOURCE_LABEL.gold} value={you.gold} rate={you.rates.gold} cap={you.storageCap} />
-            <Chip icon={ICONS.wood} label={RESOURCE_LABEL.wood} value={you.wood} rate={you.rates.wood} cap={you.storageCap} />
-            <Chip icon={ICONS.stone} label={RESOURCE_LABEL.stone} value={you.stone} rate={you.rates.stone} cap={you.storageCap} />
+            <Chip icon={ICONS.water} label={RESOURCE_LABEL.water} value={you.water} rate={you.rates.water} cap={you.storageCap} raise="storehouse" onRaise={onRaise} />
+            <Chip icon={ICONS.food} label={RESOURCE_LABEL.food} value={you.food} rate={you.rates.food} cap={you.storageCap} raise="storehouse" onRaise={onRaise} />
+            <Chip icon={ICONS.gold} label={RESOURCE_LABEL.gold} value={you.gold} rate={you.rates.gold} cap={you.goldCap} raise="tent" onRaise={onRaise} />
+            <Chip icon={ICONS.wood} label={RESOURCE_LABEL.wood} value={you.wood} rate={you.rates.wood} cap={you.storageCap} raise="storehouse" onRaise={onRaise} />
+            <Chip icon={ICONS.stone} label={RESOURCE_LABEL.stone} value={you.stone} rate={you.rates.stone} cap={you.storageCap} raise="storehouse" onRaise={onRaise} />
             <Chip icon={ICONS.people} label={RESOURCE_LABEL.people} value={you.people} cap={you.peopleCap} />
           </div>
-          <p className="px-3 pb-2 text-center text-[10px] text-faint">سعة الخيمة {fmt(you.storageCap)} لكل مورد</p>
+          <p className="px-3 pb-2 text-center text-[10px] text-faint">
+            سعة المخزن {fmt(you.storageCap)} لكل من الماء والطعام والخشب والحجر · بيت المال {fmt(you.goldCap)} ذهب
+          </p>
         </>
       )}
     </header>
@@ -390,24 +403,35 @@ function Chip({
   value,
   rate,
   cap,
+  raise,
+  onRaise,
 }: {
   icon: typeof Droplets;
   label: string;
   value: number;
   rate?: number;
   cap?: number;
+  raise?: BuildingKind;
+  onRaise?: (kind: BuildingKind) => void;
 }) {
-  const full = cap != null && rate != null && value >= cap;
+  const state = cap != null ? capState(value, cap) : "ok";
+  const raiseLabel = raise === "tent" ? "ارفع الخيمة" : "ارفع المخزن";
   return (
-    <div className="flex min-w-0 flex-col items-center gap-0.5 py-1 text-center" aria-label={label}>
+    <div className="flex min-w-0 flex-col items-center gap-0.5 py-1 text-center" aria-label={label} data-cap-state={state}>
       <Icon size={14} aria-hidden="true" className="text-muted" />
-      <p className="tabular-nums text-[13px] leading-none">
+      <p className={`tabular-nums text-[13px] leading-none ${state === "warn" ? "text-accent" : state === "full" ? "text-danger" : ""}`}>
         {fmt(value)}
-        {cap != null && rate == null ? <span className="text-[10px] text-faint">/{fmt(cap)}</span> : null}
+        {cap != null ? <span className="text-[10px] text-faint">/{fmt(cap)}</span> : null}
       </p>
-      <p className={`h-3 text-[10px] leading-none ${full ? "text-accent" : "text-oasis"}`}>
-        {full ? "ممتلئ" : rate ? `+${fmt(rate)}` : ""}
-      </p>
+      {state === "full" && raise && onRaise ? (
+        <button type="button" onClick={() => onRaise(raise)} className="h-4 text-[10px] leading-none text-danger underline">
+          {raiseLabel}
+        </button>
+      ) : (
+        <p className={`h-3 text-[10px] leading-none ${state === "warn" ? "text-accent" : "text-oasis"}`}>
+          {state === "warn" && raise ? "يقارب الامتلاء" : rate ? `+${fmt(rate)}` : ""}
+        </p>
+      )}
     </div>
   );
 }

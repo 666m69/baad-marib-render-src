@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   BUILDINGS,
   FIELD_LABEL,
@@ -21,6 +21,7 @@ const YARD: { kind: BuildingKind; x: number; y: number }[] = [
   { kind: "farm", x: 72, y: 28 },
   { kind: "workshop", x: 27, y: 70 },
   { kind: "barracks", x: 74, y: 68 },
+  { kind: "storehouse", x: 50, y: 84 },
 ];
 
 const TONE: Record<FieldGood, string> = {
@@ -34,15 +35,23 @@ export function CampMap({
   you,
   now,
   actions,
+  focus = null,
 }: {
   you: YouState;
   now: number;
   actions: { busy: boolean; upgrade: (kind: BuildingKind) => void; upgradeField: (slot: number) => void };
+  /** Open the yard on this building (e.g. «ارفع المخزن» from a full resource bar). */
+  focus?: { kind: BuildingKind; at: number } | null;
 }) {
   const fields = you.fields ?? [];
-  const [view, setView] = useState<"fields" | "yard">("fields");
+  const [view, setView] = useState<"fields" | "yard">(focus ? "yard" : "fields");
   const [slot, setSlot] = useState(9);
-  const [kind, setKind] = useState<BuildingKind>("tent");
+  const [kind, setKind] = useState<BuildingKind>(focus?.kind ?? "tent");
+  useEffect(() => {
+    if (!focus) return;
+    setView("yard");
+    setKind(focus.kind);
+  }, [focus]);
   const activeField = fields.find((field) => field.upgradeUntil != null);
   const activeBuilding = you.buildings.find((building) => building.upgradeUntil != null);
   const activeLeft = activeField?.upgradeUntil
@@ -415,6 +424,12 @@ function YardMark({ kind, built }: { kind: BuildingKind; built: boolean }) {
       )}
       {kind === "farm" && <path d="M8 22 C8 10 12 6 20 4 C28 6 32 10 32 22" fill="none" stroke="var(--color-oasis)" strokeWidth="1.5" />}
       {kind === "workshop" && <path d="M6 24 L20 8 L34 24 Z" fill="none" stroke={line} strokeWidth="1.4" />}
+      {kind === "storehouse" && (
+        <>
+          <rect x="8" y="10" width="24" height="14" fill="none" stroke={line} strokeWidth="1.3" />
+          <path d="M8 10 L20 4 L32 10 M14 24 V16 H26 V24" fill="none" stroke="var(--color-accent)" strokeWidth="1" />
+        </>
+      )}
       {kind === "barracks" && (
         <>
           <path d="M4 24 L14 10 H28 L36 24 Z" fill="none" stroke={line} strokeWidth="1.3" />

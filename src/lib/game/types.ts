@@ -54,6 +54,7 @@ export type YouState = {
   training: { kind: TroopKind; qty: number; finishAt: number } | null;
   rates: Rates;
   storageCap: number;
+  goldCap: number;
   outbound: number;
   studies: StudyView[];
   sheikh: string;
