@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { claimSteward, loadDiwan, replyLetter } from "@/lib/game/api";
+import { loadDiwan, replyLetter } from "@/lib/game/api";
 import { LINEAGE, type Lineage } from "@/lib/game/balance";
 import { fmt } from "@/lib/game/format";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
@@ -20,22 +20,6 @@ function DiwanPage() {
 function Board() {
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: ["diwan"], queryFn: () => loadDiwan() });
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function claim() {
-    setBusy(true);
-    setError(null);
-    const res = await claimSteward({ data: null });
-    setBusy(false);
-    if (!res.ok) {
-      setError(res.error);
-      return;
-    }
-    await query.refetch();
-    await queryClient.invalidateQueries({ queryKey: ["diwan-gate"] });
-  }
-
   if (query.isPending) return <main className="grid min-h-dvh place-items-center bg-bg text-fg">تُجمع أخبار الوادي…</main>;
   if (query.isError || !query.data) {
     return <main className="grid min-h-dvh place-items-center bg-bg text-fg">تعذّر فتح الديوان.</main>;
@@ -47,19 +31,7 @@ function Board() {
         <div className="w-full max-w-md rounded-2xl border border-line bg-surface p-6">
           <p className="text-[11px] text-accent">بعد مأرب</p>
           <h1 className="mt-1 font-display text-4xl">الديوان</h1>
-          {board.error === "claim" ? (
-            <>
-              <p className="mt-3 text-sm text-pretty text-muted">
-                الديوان بلا صاحب. التثبيت مرة واحدة، ولا يُنقل. بعدها ترى القبائل والرسائل، وترد من هنا.
-              </p>
-              {error && <p className="mt-3 text-sm text-danger">{error}</p>}
-              <Btn className="mt-5 w-full" disabled={busy} onClick={() => void claim()}>
-                {busy ? "يُثبَّت…" : "ثبّتني صاحب الديوان"}
-              </Btn>
-            </>
-          ) : (
-            <p className="mt-3 text-sm text-muted">ليس هذا ديوانك. رسائلك تُرسل من الوادي.</p>
-          )}
+          <p className="mt-3 text-sm text-muted">ليس هذا ديوانك. رسائلك تُرسل من الوادي.</p>
           <Link to="/" className="mt-4 inline-flex min-h-11 items-center text-sm text-accent">
             عودة إلى الوادي
           </Link>

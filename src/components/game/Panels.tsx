@@ -12,8 +12,6 @@ import {
   STUDY_KINDS,
   START,
   SUGGESTED_NAMES,
-  THREAT_RANGE,
-  chebyshev,
   distance,
   moveQuote,
   paceOf,
@@ -823,12 +821,6 @@ function Market({ you, actions }: { you: YouState; actions: GameActions }) {
       {give !== take && getN > room && <p className="mt-2 text-xs text-danger">خيمة الشيخ لا تتسع.</p>}
     </section>
   );
-}
-
-export function threatNear(world: WorldSnapshot) {
-  const you = world.you;
-  if (!you) return false;
-  return world.bandits.some((b) => chebyshev(b.x, b.y, you.x, you.y) <= THREAT_RANGE);
 }
 
 export function AboutSheet({ onClose }: { onClose: () => void }) {

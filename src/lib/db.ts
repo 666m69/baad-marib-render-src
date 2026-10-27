@@ -12,12 +12,20 @@ const databaseUrl =
   rawDatabaseUrl && rawDatabaseUrl.trim() ? rawDatabaseUrl : undefined;
 
 /**
- * Active backend: real **Neon** when `DATABASE_URL` is set (deployed / configured
- * sandbox), otherwise a local embedded **PGLite** (Postgres compiled to WASM) so
- * the app has a working database even with nothing configured — the live preview
- * included. Swap in Neon later by just setting `DATABASE_URL`; no code changes.
+ * Active backend: real **Neon** when `DATABASE_URL` is set (deployed), otherwise a local embedded **PGLite** (Postgres compiled to WASM) so
+ * the app has a working database locally with nothing configured. Swap in Neon later by just setting `DATABASE_URL`; no code changes.
  */
 export const dbSource: DbSource = databaseUrl ? "neon" : "pglite";
+
+/**
+ * Tests only: `PGLITE_MEMORY=1` opens a throwaway in-memory PGLite and reads
+ * migrations from disk, so engine tests never touch `.data/`.
+ */
+const memoryDb =
+  typeof process !== "undefined" && process.env.PGLITE_MEMORY === "1" && !databaseUrl;
+
+/** Connections per pool. Neon's free tier is small; keep both pools (app + auth) modest. */
+export const POOL_MAX = 4;
 
 /**
  * Minimal shared SQL surface, satisfied by both Neon and PGLite. Both the
@@ -47,6 +55,7 @@ export interface Sql {
  */
 const globalRef = globalThis as typeof globalThis & {
   __pgSqlPromise__?: Promise<Sql>;
+  __pgPool__?: Promise<import("pg").Pool>;
   __pgliteInstance__?: Promise<import("@electric-sql/pglite").PGlite>;
   __pgliteMigrateChain__?: Promise<void>;
 };
@@ -55,7 +64,7 @@ const globalRef = globalThis as typeof globalThis & {
  * Result-type parity: Postgres sends every value as text plus a type OID — the
  * JS value is the DRIVER's parsing choice, and pg and PGLite disagree (pg:
  * int8 -> string, date -> local-midnight Date; PGLite: int8 -> BigInt, which
- * JSON.stringify rejects, date -> UTC Date). Normalize both so preview and
+ * JSON.stringify rejects, date -> UTC Date). Normalize both so local and
  * production return identical, JSON-safe shapes:
  *   int8/bigint (incl. count(*)) -> number (past 2^53 loses precision — cast
  *                                   `::text` if you ever need huge integers)
@@ -68,16 +77,19 @@ const OID_DATE = 1082;
 const OID_INTERVAL = 1186;
 const identity = (v: string) => v;
 
-const VALLEY_DIR = "/workspace/.data/pglite";
-const VALLEY_TAR = "/workspace/.data/valley.tar";
+/** Local data lives in the project's own `.data/` (git-ignored), or PGLITE_DIR. */
+const DATA_DIR = (typeof process !== "undefined" && process.env.PGLITE_DIR?.trim()) || `${process.cwd()}/.data`;
+const VALLEY_DIR = `${DATA_DIR}/pglite`;
+const VALLEY_TAR = `${DATA_DIR}/valley.tar`;
 
 /** Copy a still-in-memory valley to disk once, before the next restart opens the file. */
 async function snapshotValley(pg: import("@electric-sql/pglite").PGlite) {
+  if (memoryDb) return;
   if (existsSync(`${VALLEY_DIR}/PG_VERSION`) || existsSync(VALLEY_TAR)) return;
   const dump = await pg.dumpDataDir();
   const bytes = new Uint8Array(await dump.arrayBuffer());
   if (bytes.byteLength < 64) return;
-  mkdirSync("/workspace/.data", { recursive: true });
+  mkdirSync(DATA_DIR, { recursive: true });
   writeFileSync(VALLEY_TAR, bytes);
   console.log(`[db] valley snapshot ${bytes.byteLength} bytes`);
 }
@@ -89,7 +101,8 @@ async function openValley() {
     [OID_DATE]: identity,
     [OID_INTERVAL]: identity,
   };
-  mkdirSync("/workspace/.data", { recursive: true });
+  if (memoryDb) return new PGlite({ parsers });
+  mkdirSync(DATA_DIR, { recursive: true });
   if (!existsSync(`${VALLEY_DIR}/PG_VERSION`) && existsSync(VALLEY_TAR)) {
     const tar = readFileSync(VALLEY_TAR);
     return new PGlite(VALLEY_DIR, { parsers, loadDataDir: new Blob([tar]) });
@@ -115,15 +128,25 @@ function toSql(run: Run): Sql {
   return sql;
 }
 
-function createNeonSql(): Promise<Sql> {
-  globalRef.__pgSqlPromise__ ??= (async () => {
+function neonPool(): Promise<import("pg").Pool> {
+  globalRef.__pgPool__ ??= (async () => {
     // Regular Postgres driver: node-postgres (`pg`) — works directly with Neon's
     // pooled endpoint. One pool per process; warm serverless instances reuse it.
     const { Pool, types } = await import("pg");
     types.setTypeParser(OID_INT8, Number);
     types.setTypeParser(OID_DATE, identity);
     types.setTypeParser(OID_INTERVAL, identity);
-    const pool = new Pool({ connectionString: databaseUrl });
+    return new Pool({ connectionString: databaseUrl, max: POOL_MAX, idleTimeoutMillis: 10_000 });
+  })().catch((err) => {
+    globalRef.__pgPool__ = undefined;
+    throw err;
+  });
+  return globalRef.__pgPool__;
+}
+
+function createNeonSql(): Promise<Sql> {
+  globalRef.__pgSqlPromise__ ??= (async () => {
+    const pool = await neonPool();
     return toSql(async <T>(text: string, params: unknown[]) => {
       const res = await pool.query(text, params);
       return res.rows as T[];
@@ -153,19 +176,20 @@ async function createPgliteSql(): Promise<Sql> {
   const pg = await globalRef.__pgliteInstance__;
   await snapshotValley(pg);
 
-  // Apply migrations/ (the single schema source) so preview matches production.
+  // Apply migrations/ (the single schema source) so local dev matches production.
   // SQL is inlined by the bundler via import.meta.glob (no runtime fs); applied
-  // files are tracked in _migrations. The glob does not descend, so the opt-in
-  // auth schema under migrations/auth/ stays out. Runs once per module instance
+  // files are tracked in _migrations. The glob does not descend. Runs once per module instance
   // — so an HMR reload after adding a migration file applies it live — with
   // passes serialized on a global chain so concurrent callers never
   // double-apply.
   const migrate = async (): Promise<void> => {
-    const migrations = import.meta.glob("/migrations/*.sql", {
-      query: "?raw",
-      import: "default",
-      eager: true,
-    }) as Record<string, string>;
+    const migrations = memoryDb
+      ? await diskMigrations()
+      : (import.meta.glob("/migrations/*.sql", {
+          query: "?raw",
+          import: "default",
+          eager: true,
+        }) as Record<string, string>);
     const doneRows = await pg.query<{ name: string }>(
       "select name from _migrations",
     );
@@ -189,6 +213,44 @@ async function createPgliteSql(): Promise<Sql> {
     const result = await pg.query<T>(text, params);
     return result.rows;
   });
+}
+
+/**
+ * Run `fn` inside one database transaction on one connection. Commits when
+ * `fn` resolves, rolls back when it throws. Row locks taken inside (e.g.
+ * `select … for update`) hold until the end, across every server instance.
+ */
+export async function withTransaction<T>(fn: (tx: Sql) => Promise<T>): Promise<T> {
+  if (typeof window !== "undefined") throw new Error("@/lib/db is server-only");
+  if (dbSource === "neon") {
+    const pool = await neonPool();
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      const tx = toSql(async <R>(text: string, params: unknown[]) => (await client.query(text, params)).rows as R[]);
+      const out = await fn(tx);
+      await client.query("commit");
+      return out;
+    } catch (err) {
+      await client.query("rollback").catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+  await getSql();
+  const pg = await globalRef.__pgliteInstance__;
+  if (!pg) throw new Error("PGLite instance failed to initialize");
+  return pg.transaction((tx) => fn(toSql(async <R>(text: string, params: unknown[]) => (await tx.query<R>(text, params)).rows)));
+}
+
+/** Tests only (PGLITE_MEMORY=1): the same top-level migrations/*.sql, read from disk. */
+async function diskMigrations(): Promise<Record<string, string>> {
+  const { readdirSync } = await import("node:fs");
+  const dir = new URL("../../migrations/", import.meta.url).pathname;
+  const out: Record<string, string> = {};
+  for (const name of readdirSync(dir)) if (name.endsWith(".sql")) out[`/migrations/${name}`] = readFileSync(dir + name, "utf8");
+  return out;
 }
 
 let sqlPromise: Promise<Sql> | null = null;
@@ -219,8 +281,8 @@ export function getSql(): Promise<Sql> {
 }
 
 /**
- * The shared PGLite instance (preview only), with `migrations/*.sql` applied.
- * Lets Better Auth persist to the SAME embedded DB as app data in preview (via a
+ * The shared PGLite instance (local only), with `migrations/*.sql` applied.
+ * Lets Better Auth persist to the SAME embedded DB as app data locally (via a
  * Kysely dialect). Throws when `DATABASE_URL` is set (that path uses Neon).
  */
 export async function getPglite(): Promise<import("@electric-sql/pglite").PGlite> {
@@ -236,7 +298,7 @@ export async function getPglite(): Promise<import("@electric-sql/pglite").PGlite
 /**
  * Finish DB bootstrap before the server handles traffic.
  *
- * - **PGLite** (preview / no `DATABASE_URL`): open `.data/pglite` and apply
+ * - **PGLite** (local / no `DATABASE_URL`): open `.data/pglite` and apply
  *   `migrations/*.sql`. Idempotent — concurrent callers share one promise.
  * - **Neon**: no-op (pool is created lazily on first query).
  *

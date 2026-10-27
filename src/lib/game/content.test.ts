@@ -33,7 +33,15 @@ function walk(dir: string, out: string[] = []) {
   return out;
 }
 
-const gameFiles = [...walk(join(ROOT, "src")), ...walk(join(ROOT, "migrations")), ...walk(join(ROOT, "public"))];
+/** The one migration that rewrites old stored reports may name the two Companions, only inside replace(). */
+const SCRUB = join(ROOT, "migrations", "0017_scrub_companions.sql");
+
+/** The name blocklist and its tests list sacred names in order to refuse them; they are not content. */
+const BLOCKLIST = [join(ROOT, "src", "lib", "game", "names.ts"), join(ROOT, "src", "lib", "game", "names.test.ts")];
+
+const gameFiles = [...walk(join(ROOT, "src")), ...walk(join(ROOT, "migrations")), ...walk(join(ROOT, "public"))].filter(
+  (file) => file !== SCRUB && !BLOCKLIST.includes(file),
+);
 
 test("no Companion appears anywhere in game code or content", () => {
   for (const file of gameFiles) {
@@ -73,4 +81,37 @@ test("Mecca is never a capture objective or win condition", () => {
     const text = readFileSync(file, "utf8");
     for (const word of forbidden) assert.ok(!word.test(text), `${word} in ${file}`);
   }
+});
+
+test("the scrub migration names the Companions only to replace them", () => {
+  const text = readFileSync(SCRUB, "utf8");
+  const code = text
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("--"))
+    .join("\n");
+  for (const name of ["حسان بن ثابت", "كعب بن مالك"]) {
+    const uses = code.split(name).length - 1;
+    const replaced = (code.match(new RegExp(`replace\\([^;]*'${name}'`, "g")) ?? []).length;
+    assert.ok(uses > 0 && replaced > 0, name);
+  }
+  for (const name of COMPANIONS.slice(2)) assert.ok(!text.includes(name), name);
+});
+
+test("no lone «لبيد» among sheikh names, and no lineage edge hints at a sanctuary (QA #18, #19)", () => {
+  assert.equal(SHEIKH_NAMES.includes("لبيد"), false);
+  const balance = readFileSync(join(ROOT, "src/lib/game/balance.ts"), "utf8");
+  const engine = readFileSync(join(ROOT, "src/lib/game/engine.server.ts"), "utf8");
+  assert.doesNotMatch(balance + engine, /sacred|دنّس/);
+  assert.equal(LINEAGE.khuzaa.edge, "haven");
+});
+
+test("tribe names after a preposition take the genitive: «نصر على بني …» (QA #17)", async () => {
+  const { genitive } = await import("./names");
+  assert.equal(`نصر على ${genitive("بنو السراب")}`, "نصر على بني السراب");
+  assert.equal(genitive("أبو الحسن"), "أبي الحسن");
+  assert.equal(genitive("ذو يزن"), "ذي يزن");
+  assert.equal(genitive("كندة"), "كندة");
+  assert.equal(genitive("بنوالسراب"), "بنوالسراب");
+  const engine = readFileSync(join(ROOT, "src/lib/game/engine.server.ts"), "utf8");
+  assert.doesNotMatch(engine, /(على|أمام|من|مع) \$\{(label|defName|publicName|attackerName|String\(tribe\.name\))\}/);
 });

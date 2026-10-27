@@ -13,7 +13,8 @@ import {
   fieldCost,
   fitIncome,
   goldCap,
-  spillNote,
+  keptNote,
+  lootTransfer,
   storageCap,
   storehouseForLegacyTent,
   upgradeCost,
@@ -66,21 +67,40 @@ test("a stock already over the cap gains nothing", () => {
   assert.equal(lost.water, 50);
 });
 
-test("spill note names what was lost to the storehouse", () => {
-  assert.equal(spillNote({ water: 0, food: 0, gold: 0, wood: 0, stone: 0 }), "");
-  const note = spillNote({ water: 5, food: 12, gold: 0, wood: 0, stone: 0 });
-  assert.match(note, /لضيق المخزن/);
+test("loot that does not fit stays with the target, and the note says so (not «lost»)", () => {
+  assert.equal(keptNote({ water: 0, food: 0, gold: 0, wood: 0, stone: 0 }, "عندهم"), "");
+  const note = keptNote({ water: 5, food: 12, gold: 0, wood: 0, stone: 0 }, "عندهم");
+  assert.match(note, /^بقي عندهم /);
   assert.match(note, /12 طعام/);
   assert.match(note, /5 ماء/);
+  assert.match(note, /لضيق المخزن/);
+  assert.doesNotMatch(note, /ضاع/);
 });
 
-test("gold lost to the cap is blamed on بيت المال, not the storehouse", () => {
-  const gold = spillNote({ water: 0, food: 0, gold: 30, wood: 0, stone: 0 });
+test("gold that does not fit is blamed on بيت المال, not the storehouse", () => {
+  const gold = keptNote({ water: 0, food: 0, gold: 30, wood: 0, stone: 0 }, "عندهم");
   assert.match(gold, /30 ذهب لضيق بيت المال/);
   assert.doesNotMatch(gold, /المخزن/);
-  const both = spillNote({ water: 0, food: 4, gold: 30, wood: 0, stone: 0 });
+  const both = keptNote({ water: 0, food: 4, gold: 30, wood: 0, stone: 0 }, "عندهم");
   assert.match(both, /4 طعام لضيق المخزن/);
   assert.match(both, /30 ذهب لضيق بيت المال/);
+});
+
+test("lootTransfer moves exactly min(loot, target stock, raider room) per good and conserves the rest", () => {
+  const want = { water: 50, food: 300, gold: 200, wood: 0, stone: 90 };
+  const have = { water: 40, food: 1000, gold: 1000, wood: 500, stone: 1000 };
+  const room = { water: 100, food: 120, gold: 0, wood: 999, stone: 90 };
+  const { moved, left } = lootTransfer(want, have, room);
+  assert.deepEqual(moved, { water: 40, food: 120, gold: 0, wood: 0, stone: 90 });
+  assert.deepEqual(left, { water: 0, food: 180, gold: 200, wood: 0, stone: 0 });
+  for (const k of ["water", "food", "gold", "wood", "stone"] as const) {
+    assert.equal(moved[k] + left[k], Math.min(want[k], have[k]), k);
+    assert.ok(moved[k] <= room[k] && moved[k] <= have[k], k);
+  }
+  // Negative or fractional inputs never create or destroy anything.
+  assert.deepEqual(lootTransfer({ water: -5, food: 2.9, gold: 0, wood: 0, stone: 0 }, have, { ...room, food: -3 }).moved, {
+    water: 0, food: 0, gold: 0, wood: 0, stone: 0,
+  });
 });
 
 test("bar warns from 80% and is full at the cap", () => {
@@ -175,4 +195,29 @@ test("storehouse card shows the next cap", () => {
   assert.ok(row);
   assert.equal(row.now, "3,000");
   assert.equal(row.next, "4,500");
+});
+
+test("banked accrual: 6/min polled every 8 s for 96 s gives 9, not 0", async () => {
+  const { accrueGood } = await import("./balance");
+  let state = { stock: 0, bank: 0 };
+  for (let i = 0; i < 12; i++) state = accrueGood(state.stock, state.bank, 6, 8000, 3000);
+  assert.equal(state.stock, 9);
+  assert.equal(state.bank, 600);
+  assert.deepEqual(accrueGood(2999, 900, 60, 60_000, 3000), { stock: 3000, bank: 0 });
+  assert.deepEqual(accrueGood(5000, 10, 60, 60_000, 3000), { stock: 5000, bank: 0 });
+  assert.deepEqual(accrueGood(10, 5, 0, 60_000, 3000), { stock: 10, bank: 5 });
+});
+
+test("people growth keeps its remainder too", async () => {
+  const { growPeople } = await import("./balance");
+  assert.deepEqual(growPeople(5, 0, 100, 8000, 50, 20_000, 40), { people: 5, bank: 8000 });
+  assert.deepEqual(growPeople(5, 16_000, 100, 8000, 50, 20_000, 40), { people: 6, bank: 4000 });
+  assert.deepEqual(growPeople(5, 0, 10, 8000, 50, 20_000, 40), { people: 5, bank: 0 });
+});
+
+test("the storehouse hint no longer says loot is lost to a full storehouse", async () => {
+  const { readFileSync } = await import("node:fs");
+  const text = readFileSync(new URL("./develop.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(text, /حتى الغنيمة/);
+  assert.match(text, /الغنيمة التي لا تسعها تبقى عند أهلها/);
 });

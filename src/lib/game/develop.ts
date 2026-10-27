@@ -133,7 +133,7 @@ export function storeNearFull(you: Pick<YouState, "water" | "food" | "wood" | "s
 export function nextStep(you: YouState): DevelopStep {
   const levels = levelMap(you);
   if (storeNearFull(you) && levels.storehouse < BUILDINGS.storehouse.max) {
-    return { title: "ارفع المخزن", detail: "المخزن قارب الامتلاء. ما زاد على سعته يضيع، حتى الغنيمة.", kind: "storehouse" };
+    return { title: "ارفع المخزن", detail: "المخزن قارب الامتلاء. ما زاد على سعته من الغلّة يضيع، والغنيمة التي لا تسعها تبقى عند أهلها.", kind: "storehouse" };
   }
   if (levels.well < 1) return { title: "احفر البئر", detail: "من دون ماء تجف المضارب قبل أي غارة.", kind: "well" };
   if (levels.farm < 1) return { title: "ازرع المزرعة", detail: "السكان يتوقفون إن هبط الطعام تحت أربعين.", kind: "farm" };

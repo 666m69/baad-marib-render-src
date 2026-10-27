@@ -1,11 +1,12 @@
 import { getSql, type Sql } from "@/lib/db";
+import { isSteward, type Account } from "./steward";
 
 type Row = Record<string, unknown>;
 
 const MAX_BODY = 280;
 const MAX_REPLY = 400;
 
-export type DiwanGate = { steward: boolean; claimOpen: boolean; pending: number };
+export type DiwanGate = { steward: boolean; pending: number };
 
 export type LetterView = {
   body: string;
@@ -45,7 +46,7 @@ export type DiwanLetter = {
 
 export type DiwanBoard =
   | { ok: true; tribes: DiwanTribe[]; letters: DiwanLetter[] }
-  | { ok: false; error: "closed" | "claim" };
+  | { ok: false; error: "closed" };
 
 function num(value: unknown) {
   const n = Number(value ?? 0);
@@ -64,33 +65,19 @@ function clean(text: string, max: number) {
   return body;
 }
 
-function adminEmails() {
-  return (process.env.ADMIN_EMAIL ?? "")
-    .split(",")
-    .map((item) => item.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-async function emailOf(sql: Sql, userId: string) {
+async function accountOf(sql: Sql, userId: string): Promise<Account | null> {
   try {
-    const rows = await sql<Row>`select email from "user" where id = ${userId}`;
-    const email = rows[0]?.email;
-    return email ? String(email).toLowerCase() : null;
+    const rows = await sql<Row>`select id, email, "emailVerified" as verified from "user" where id = ${userId}`;
+    const row = rows[0];
+    if (!row) return null;
+    return { id: String(row.id), email: row.email ? String(row.email) : null, emailVerified: row.verified === true };
   } catch {
     return null;
   }
 }
 
 async function status(sql: Sql, userId: string) {
-  const email = await emailOf(sql, userId);
-  const listed = email != null && adminEmails().includes(email);
-  if (listed) {
-    await sql`insert into stewards (user_id) values (${userId}) on conflict (user_id) do nothing`;
-  }
-  const mine = await sql<Row>`select user_id from stewards where user_id = ${userId}`;
-  const any = await sql<Row>`select user_id from stewards limit 1`;
-  const steward = listed || mine.length > 0;
-  return { steward, claimOpen: !steward && any.length === 0 };
+  return { steward: isSteward(await accountOf(sql, userId), process.env.ADMIN_EMAIL) };
 }
 
 export async function gate(userId: string): Promise<DiwanGate> {
@@ -99,21 +86,6 @@ export async function gate(userId: string): Promise<DiwanGate> {
   if (!face.steward) return { ...face, pending: 0 };
   const rows = await sql<Row>`select count(*)::int as n from letters where reply is null and seen = false`;
   return { ...face, pending: num(rows[0]?.n) };
-}
-
-export async function claimSteward(userId: string): Promise<string | null> {
-  const sql = await getSql();
-  const face = await status(sql, userId);
-  if (face.steward) return null;
-  if (!face.claimOpen) return "للديوان صاحب.";
-  const rows = await sql<Row>`
-    insert into stewards (user_id)
-    select ${userId}
-    where not exists (select 1 from stewards)
-    returning user_id
-  `;
-  if (!rows.length) return "للديوان صاحب.";
-  return null;
 }
 
 export async function myLetter(userId: string): Promise<LetterView | null> {
@@ -150,7 +122,7 @@ export async function sendLetter(userId: string, body: string): Promise<string |
 export async function loadDiwan(userId: string): Promise<DiwanBoard> {
   const sql = await getSql();
   const face = await status(sql, userId);
-  if (!face.steward) return { ok: false, error: face.claimOpen ? "claim" : "closed" };
+  if (!face.steward) return { ok: false, error: "closed" };
   await sql`update letters set seen = true where seen = false`;
   const tribes = await sql<Row>`
     select name, sheikh_name, lineage, x, y, water, food, gold, wood, stone,

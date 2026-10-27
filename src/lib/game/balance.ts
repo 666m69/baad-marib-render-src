@@ -593,24 +593,42 @@ export function resolveBattle(
 export type Stock = { water: number; food: number; gold: number; wood: number; stone: number };
 
 /** Report line for income lost to a full storehouse; empty when nothing spilled. */
-export function spillNote(lost: Stock) {
-  const bits: string[] = [];
-  if (lost.food) bits.push(`${lost.food} طعام`);
-  if (lost.wood) bits.push(`${lost.wood} خشب`);
-  if (lost.stone) bits.push(`${lost.stone} حجر`);
-  if (lost.water) bits.push(`${lost.water} ماء`);
-  const parts: string[] = [];
-  if (bits.length) parts.push(`${bits.join("، ")} لضيق المخزن`);
-  if (lost.gold) parts.push(`${lost.gold} ذهب لضيق بيت المال`);
-  return parts.length ? `ضاع من الغنيمة ${parts.join("، و")}.` : "";
+/**
+ * What a raid actually moves, per good: the loot, but never more than the
+ * target holds nor more than the raider's free room. Nothing is destroyed:
+ * `moved` leaves the target and reaches the raider; `left` stays with the target.
+ */
+export function lootTransfer(want: Stock, have: Stock, room: Stock): { moved: Stock; left: Stock } {
+  const moved: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
+  const left: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
+  for (const key of Object.keys(moved) as (keyof Stock)[]) {
+    const wanted = Math.max(0, Math.min(Math.floor(want[key]), Math.floor(have[key])));
+    moved[key] = Math.min(wanted, Math.max(0, Math.floor(room[key])));
+    left[key] = wanted - moved[key];
+  }
+  return { moved, left };
 }
 
-export function takeLoot(stock: Stock, carry: number): Stock {
+/** Report line for loot that did not fit the raider's stores and so stayed with the target. */
+export function keptNote(left: Stock, holder: string) {
+  const bits: string[] = [];
+  if (left.food) bits.push(`${left.food} طعام`);
+  if (left.wood) bits.push(`${left.wood} خشب`);
+  if (left.stone) bits.push(`${left.stone} حجر`);
+  if (left.water) bits.push(`${left.water} ماء`);
+  const parts: string[] = [];
+  if (bits.length) parts.push(`${bits.join("، ")} لضيق المخزن`);
+  if (left.gold) parts.push(`${left.gold} ذهب لضيق بيت المال`);
+  return parts.length ? `بقي ${holder} ${parts.join("، و")}.` : "";
+}
+
+/** Fill `carry` from `stock`, food first, taking at most `share` of each good. */
+export function takeLoot(stock: Stock, carry: number, share = LOOT_SHARE): Stock {
   const loot: Stock = { water: 0, food: 0, gold: 0, wood: 0, stone: 0 };
   let room = Math.max(0, carry);
   const order: (keyof Stock)[] = ["food", "gold", "wood", "stone", "water"];
   for (const key of order) {
-    const want = Math.floor(stock[key] * LOOT_SHARE);
+    const want = Math.floor(stock[key] * share);
     const got = Math.min(want, room, stock[key]);
     loot[key] = got;
     room -= got;
@@ -671,7 +689,7 @@ export const SUGGESTED_NAMES = ["كنانة", "الأزد", "همدان", "طي�
 export const SHEIKH_TRAITS = ["guard", "water", "rider", "raid"] as const;
 export type SheikhTrait = (typeof SHEIKH_TRAITS)[number];
 
-export const SHEIKH_NAMES = ["حارث", "قيس", "أوس", "زيد", "لبيد", "عامر", "سعد", "مالك"];
+export const SHEIKH_NAMES = ["حارث", "قيس", "أوس", "زيد", "مهلهل", "عامر", "سعد", "مالك"];
 
 export const TRAITS: Record<SheikhTrait, { label: string; blurb: string }> = {
   guard: { label: "حارس", blurb: "دفاع المضارب يثقل كلما علا صيت الشيخ." },
@@ -711,7 +729,7 @@ export const LINEAGE: Record<
     poetNote: string;
     blurb: string;
     gift: string;
-    edge: "water" | "market" | "build" | "pasture" | "sacred";
+    edge: "water" | "market" | "build" | "pasture" | "haven";
     trait: SheikhTrait;
   }
 > = {
@@ -762,7 +780,7 @@ export const LINEAGE: Record<
     poetNote: "شخصية متخيَّلة",
     blurb: "أهل تهامة، وحمى لا يُداس مجاناً.",
     gift: "دفاع المضارب أثقل، ومن يُسكت مرعاهم يخسر صيتاً.",
-    edge: "sacred",
+    edge: "haven",
     trait: "guard",
   },
 };
@@ -785,7 +803,7 @@ export function playedTrait(lineage: unknown, stored: SheikhTrait): SheikhTrait 
   const line = lineageBy(lineage);
   if (!line) return stored;
   if (line.edge === "water") return "water";
-  if (line.edge === "sacred") return "guard";
+  if (line.edge === "haven") return "guard";
   return null;
 }
 
@@ -902,3 +920,34 @@ export const DEFERRED = [
   "التحالفات",
   "الرسوم المفصّلة",
 ];
+
+/** Thousandths of a unit carried between ticks, so slow rates and frequent polls still add up. */
+export const BANK_SCALE = 1000;
+
+/**
+ * Grow one good for `ms` milliseconds at `ratePerMin`, keeping the fractional
+ * remainder in `bank` (thousandths). At the cap the bank is cleared.
+ */
+export function accrueGood(stock: number, bank: number, ratePerMin: number, ms: number, cap: number) {
+  const safeBank = Number.isFinite(bank) ? Math.max(0, Math.floor(bank)) : 0;
+  if (stock >= cap) return { stock, bank: 0 };
+  if (!(ratePerMin > 0) || !(ms > 0)) return { stock, bank: safeBank };
+  const total = safeBank + Math.floor((ratePerMin * ms) / 60);
+  const gain = Math.floor(total / BANK_SCALE);
+  const next = stock + gain;
+  if (next >= cap) return { stock: cap, bank: 0 };
+  return { stock: next, bank: total - gain * BANK_SCALE };
+}
+
+/** People growth: one person per `growMs` while food is above the gate, remainder kept in `bank` (ms). */
+export function growPeople(people: number, bank: number, food: number, ms: number, cap: number, growMs: number, foodGate: number) {
+  if (!(food > foodGate) || people >= cap || !(ms > 0)) return { people, bank };
+  const total = bank + ms;
+  return { people: Math.min(cap, people + Math.floor(total / growMs)), bank: total % growMs };
+}
+
+/** A whole number from untrusted input; anything not finite becomes -1 so range checks reject it. */
+export function whole(value: unknown): number {
+  const n = typeof value === "number" ? value : Number.NaN;
+  return Number.isFinite(n) ? Math.floor(n) : -1;
+}
