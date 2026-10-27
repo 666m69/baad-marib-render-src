@@ -1,4 +1,4 @@
-// Layout check for the resource bar and header at 390px and 1280px (QA #9, #15, #16).
+// Layout check for the resource bar, header and map tile names at 390px and 1280px (QA #9, #15, #16).
 // Not part of `npm test` (needs a browser). Usage, with the dev server on :8080:
 //   npm i --no-save playwright && node scripts/layout-check.mjs /tmp/shots fresh
 // then fill storage to the cap and run again with phase "full". Prints overflow problems as JSON.
@@ -61,9 +61,20 @@ async function measure(page, label) {
       const r = e.getBoundingClientRect();
       return { text: e.textContent.trim().slice(0, 12), top: Math.round(r.top), h: Math.round(r.height) };
     });
+    // QA #15: every tribe name on the map is shown whole (not clipped by itself or its tile).
+    const tiles = [...document.querySelectorAll('[data-testid="tile-name"]')].map((el) => {
+      const cell = el.closest(".cell");
+      const clipped = el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1;
+      const tileClips = cell ? getComputedStyle(cell).overflow !== "visible" : true;
+      if (clipped || tileClips) problems.push(`tile name "${el.textContent}" clipped (self ${clipped}, tile ${tileClips})`);
+      if (cell && cell.getAttribute("title") !== el.textContent) problems.push(`tile "${el.textContent}" has no full-name tooltip`);
+      const r = el.getBoundingClientRect();
+      return { text: el.textContent, w: Math.round(r.width), h: Math.round(r.height), lines: Math.round(r.height / parseFloat(getComputedStyle(el).lineHeight)) };
+    });
     const smallest = Math.min(...[...bar.querySelectorAll("button")].map((b) => parseFloat(getComputedStyle(b).fontSize)), 99);
     return {
       problems,
+      tiles,
       nameTruncated: name ? name.scrollWidth > name.clientWidth + 1 : null,
       nameText: name?.textContent,
       pageScrollWidth: document.documentElement.scrollWidth,

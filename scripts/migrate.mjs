@@ -3,25 +3,28 @@
  * Deploy-time database migrator (node-postgres, `pg`).
  *
  * Runs during `npm run build` (on every Render build) applying pending files
- * in ../migrations to DATABASE_URL. Each file is applied in one transaction and
+ * in ../migrations to DATABASE_URL_UNPOOLED (Neon's direct endpoint), or to
+ * DATABASE_URL when that is not set. Each file is applied in one transaction and
  * recorded in a `_migrations` table, so it runs once and is safe to re-run.
  *
- * No DATABASE_URL (local builds) -> skip; the PGLite fallback applies
+ * Neither set (local builds) -> skip; the PGLite fallback applies
  * the same files at startup instead (see src/lib/db.ts).
  */
 import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import pg from "pg";
-import { pendingMigrations } from "./migration-plan.mjs";
+import { migrationDatabaseUrl, pendingMigrations } from "./migration-plan.mjs";
 
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) {
+const target = migrationDatabaseUrl(process.env);
+if (!target) {
   console.log(
     "[migrate] DATABASE_URL not set — skipping (the PGLite fallback migrates itself).",
   );
   process.exit(0);
 }
+const databaseUrl = target.url;
+console.log(`[migrate] using ${target.source}`);
 
 const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
 

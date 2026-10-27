@@ -9,6 +9,7 @@ export function arabicAuthError(err: AuthErrorLike): string {
     return "البريد أو كلمة السر غير صحيحة.";
   if (code === "PASSWORD_TOO_SHORT") return "كلمة السر قصيرة. ثمانية أحرف على الأقل.";
   if (code === "PASSWORD_TOO_LONG") return "كلمة السر طويلة جداً.";
+  if (code === "NAME_NOT_ALLOWED") return "هذا الاسم غير مسموح: لا أسماء مقدسة ولا ألفاظ نابية ولا انتحال للإدارة.";
   if (code === "INVALID_EMAIL") return "تحقق من صيغة البريد.";
   if (code === "INVALID_ORIGIN" || code === "MISSING_OR_NULL_ORIGIN") return "تعذّر الدخول من هذا العنوان.";
   return "تعذّر الدخول. حاول مرة أخرى.";
